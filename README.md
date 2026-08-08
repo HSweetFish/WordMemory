@@ -1,6 +1,8 @@
 # 词忆 WordMemory 📚
 
 > 🌐 **在线体验**：https://hsweetfish.github.io/WordMemory/ （无需安装，浏览器打开即用，首次访问后支持离线）
+>
+> 🏷 **最新版本**：[v0.1.0](https://github.com/HSweetFish/WordMemory/releases) · 版本迭代规范见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 本地优先（local-first）的背单词 Web 应用（PWA）：
 
@@ -126,7 +128,7 @@ A：可以。首次访问（或本地构建后）应用外壳会被 PWA Service 
 A：词库数据源自 qwerty-learner（GPL-3.0），本项目整体采用 GPL-3.0 许可证，详见 [LICENSE](LICENSE)。
 
 **Q：如何贡献 / 反馈问题？**
-A：欢迎提交 Issue 或 Pull Request。请先阅读 [docs/IMPORT_FORMAT.md](docs/IMPORT_FORMAT.md) 了解自定义词表格式。
+A：欢迎提交 Issue 或 Pull Request。请先阅读 [docs/IMPORT_FORMAT.md](docs/IMPORT_FORMAT.md) 了解自定义词表格式，开发与版本规范见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)。
 
 ## 测试
 
