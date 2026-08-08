@@ -1,0 +1,44 @@
+[
+  {
+    "id": "cet4",
+    "name": "四级",
+    "desc": "大学英语四级词汇（约 2600 词）",
+    "count": 2607,
+    "file": "cet4.json"
+  },
+  {
+    "id": "cet6",
+    "name": "六级",
+    "desc": "大学英语六级词汇（约 2300 词）",
+    "count": 2345,
+    "file": "cet6.json"
+  },
+  {
+    "id": "kaoyan",
+    "name": "考研",
+    "desc": "考研英语词汇（约 3700 词）",
+    "count": 3727,
+    "file": "kaoyan.json"
+  },
+  {
+    "id": "ielts",
+    "name": "雅思",
+    "desc": "雅思核心词汇（约 3600 词）",
+    "count": 3575,
+    "file": "ielts.json"
+  },
+  {
+    "id": "toefl",
+    "name": "托福",
+    "desc": "托福核心词汇（约 4300 词）",
+    "count": 4264,
+    "file": "toefl.json"
+  },
+  {
+    "id": "coca2w",
+    "name": "COCA 2万",
+    "desc": "COCA 美语语料库两万高频词",
+    "count": 17633,
+    "file": "coca2w.json"
+  }
+]

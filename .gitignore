@@ -1,0 +1,28 @@
+# 依赖与构建产物
+node_modules/
+dist/
+
+# 原始词库数据（可由 scripts/download-wordlists.mjs 重新下载）
+data/raw/
+
+# 编辑器与系统
+.DS_Store
+Thumbs.db
+*.local
+.vscode/
+.idea/
+
+# 运行时与会话本地数据（非产品代码，不入库）
+.opensquilla/
+memory/
+
+# 本地文件夹同步/导出产物（含个人学习数据与 AI Key，切勿入库）
+wordmemory-data*.json
+考研基础词.csv
+
+# 助手工作区记忆（不入库）
+MEMORY.md
+
+# 日志
+*.log
+npm-debug.log*

@@ -1,0 +1,169 @@
+@import "tailwindcss";
+
+/* 深色模式：使用 .dark 类切换（由设置页控制） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* 品牌主色：浅蓝（sky）系——主体色。色阶补全，保证 brand-300/400/800/900 等引用全部生效 */
+  --color-brand-50: #f0f9ff;
+  --color-brand-100: #e0f2fe;
+  --color-brand-200: #bae6fd;
+  --color-brand-300: #7dd3fc;
+  --color-brand-400: #38bdf8;
+  --color-brand-500: #0ea5e9;
+  --color-brand-600: #0284c7;
+  --color-brand-700: #0369a1;
+  --color-brand-800: #075985;
+  --color-brand-900: #0c4a6e;
+  --color-brand-950: #082f49;
+  /* 页面背景：浅绿色系（与答对反馈的 emerald-50 区分，取带灰的淡绿） */
+  --color-canvas: #f1f8f2;
+}
+
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  @apply bg-canvas text-slate-800 antialiased dark:bg-slate-950 dark:text-slate-100;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  /* 页面背景：浅绿色系渐变光晕（浅色模式）——上绿、中青、下浅蓝，呼应主体浅蓝 */
+  background-image:
+    radial-gradient(1000px 520px at 8% -10%, rgba(52, 211, 153, 0.16), transparent 62%),
+    radial-gradient(900px 480px at 102% 6%, rgba(56, 189, 248, 0.12), transparent 58%),
+    radial-gradient(820px 540px at 50% 112%, rgba(134, 239, 172, 0.12), transparent 62%);
+  background-attachment: fixed;
+}
+.dark body {
+  /* 深色模式：深绿黑底 + 深青/深蓝光晕 */
+  background-image:
+    radial-gradient(1100px 520px at 8% -10%, rgba(16, 185, 129, 0.12), transparent 62%),
+    radial-gradient(900px 480px at 102% 6%, rgba(14, 165, 233, 0.1), transparent 58%),
+    radial-gradient(800px 520px at 50% 115%, rgba(20, 184, 166, 0.08), transparent 60%);
+}
+
+/* ===== 品牌渐变工具类（全站统一使用） ===== */
+
+/* 主渐变：浅蓝 → 天蓝（按钮 / 导航高亮 / 进度条） */
+.bg-brand-gradient {
+  background-image: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+}
+.bg-brand-gradient-deep {
+  background-image: linear-gradient(135deg, #0284c7 0%, #075985 100%);
+}
+/* Hero 大渐变：浅蓝 → 天蓝 → 青（首页 / 完成页） */
+.bg-hero-gradient {
+  background-image: linear-gradient(135deg, #0369a1 0%, #0ea5e9 52%, #22d3ee 100%);
+}
+/* 柔和品牌渐变（卡片背面色 / AI 结果容器） */
+.bg-brand-soft-gradient {
+  background-image: linear-gradient(160deg, rgba(14, 165, 233, 0.08), rgba(56, 189, 248, 0.05) 55%, rgba(45, 212, 191, 0.06));
+}
+/* 渐变文字 */
+.text-brand-gradient {
+  background-image: linear-gradient(120deg, #0284c7, #0ea5e9);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+/* 渐变按钮（主操作）：浅蓝 */
+.btn-gradient {
+  background-image: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+  color: #fff;
+  transition: filter 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+  box-shadow: 0 4px 14px -4px rgba(2, 132, 199, 0.5);
+}
+.btn-gradient:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 6px 18px -4px rgba(2, 132, 199, 0.6);
+}
+.btn-gradient:active {
+  transform: translateY(1px);
+}
+.btn-gradient:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+/* 渐变进度条：浅蓝 → 天蓝 → 青 */
+.progress-gradient {
+  background-image: linear-gradient(90deg, #38bdf8, #0ea5e9 55%, #0284c7);
+}
+
+/* ===== 点缀色：橙色（orange）与高级色 ===== */
+
+/* 橙色渐变点缀（连续打卡徽章 / 高亮元素） */
+.bg-accent-gradient {
+  background-image: linear-gradient(135deg, #fb923c 0%, #f97316 100%);
+  box-shadow: 0 4px 14px -4px rgba(249, 115, 22, 0.5);
+}
+.text-accent {
+  color: #f97316;
+}
+.bg-accent-soft {
+  background-image: linear-gradient(160deg, rgba(251, 146, 60, 0.12), rgba(249, 115, 22, 0.06));
+}
+
+/* 卡片悬浮光晕（首页入口等） */
+.card-hover {
+  transition: transform 0.2s ease, box-shadow 0.25s ease;
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px -10px rgba(2, 132, 199, 0.3);
+}
+
+/* 卡片翻转 3D 支持 */
+.perspective-1000 {
+  perspective: 1000px;
+}
+.preserve-3d {
+  transform-style: preserve-3d;
+}
+.backface-hidden {
+  backface-visibility: hidden;
+}
+.rotate-y-180 {
+  transform: rotateY(180deg);
+}
+
+/* AI Markdown 渲染样式 */
+.ai-markdown h2, .ai-markdown h3, .ai-markdown h4 {
+  @apply font-semibold text-slate-800;
+  margin-top: 0.5rem;
+}
+.ai-markdown h2 { @apply text-base; }
+.ai-markdown h3, .ai-markdown h4 { @apply text-sm; }
+.ai-markdown ul { @apply list-disc pl-5; }
+.ai-markdown ol { @apply list-decimal pl-5; }
+.ai-markdown li { margin: 0.15rem 0; }
+.ai-markdown code {
+  @apply rounded bg-white px-1 py-0.5 font-mono text-[12px];
+}
+.ai-markdown pre {
+  @apply my-2 overflow-x-auto rounded-xl bg-white p-3;
+}
+.ai-markdown pre code { @apply bg-transparent p-0; }
+.ai-markdown blockquote {
+  @apply border-l-4 border-brand-200 pl-3 text-slate-500;
+}
+.ai-markdown p { margin: 0.25rem 0; }
+.ai-markdown table { @apply my-2 w-full border-collapse text-xs; }
+.ai-markdown th, .ai-markdown td {
+  @apply border border-slate-200 px-2 py-1 text-left align-top dark:border-slate-700;
+}
+.ai-markdown th { @apply bg-slate-50 font-semibold dark:bg-slate-800; }
+.ai-markdown hr { @apply my-3 border-slate-200 dark:border-slate-700; }
+.ai-markdown del { @apply text-slate-400; }
+
+/* 滚动条美化（WebKit） */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  @apply rounded-full bg-slate-300;
+}
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400;
+}
