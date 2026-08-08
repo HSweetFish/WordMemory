@@ -1,5 +1,7 @@
 # 词忆 WordMemory 📚
 
+> 🌐 **在线体验**：https://hsweetfish.github.io/WordMemory/ （无需安装，浏览器打开即用，首次访问后支持离线）
+
 本地优先（local-first）的背单词 Web 应用（PWA）：
 
 - **初学 / 复习严格区分**：每日新词队列 + FSRS 遗忘曲线驱动的多轮复习队列
