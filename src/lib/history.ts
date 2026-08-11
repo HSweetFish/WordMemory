@@ -20,27 +20,48 @@ export const RATING_META: Record<
     dot: 'bg-red-500',
   },
   [Rating.Hard]: {
-    label: '勉强',
+    label: '模糊',
     en: 'Hard',
     emoji: '⚠️',
     badge: 'bg-amber-50 text-amber-600 dark:bg-amber-950/50 dark:text-amber-300',
     dot: 'bg-amber-500',
   },
   [Rating.Good]: {
-    label: '熟练',
+    label: '记得',
     en: 'Good',
     emoji: '✅',
     badge: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300',
     dot: 'bg-emerald-500',
   },
   [Rating.Easy]: {
-    label: '轻松',
+    label: '熟练',
     en: 'Easy',
     emoji: '🌟',
     badge: 'bg-sky-50 text-sky-600 dark:bg-sky-950/50 dark:text-sky-300',
     dot: 'bg-sky-500',
   },
 };
+
+/** 学习场景评分标签（与学习页按钮一致：1 没学会 / 2 有印象 / 3 学会了 / 4 很熟练） */
+export const LEARN_RATING_LABELS: Record<number, string> = {
+  [Rating.Again]: '没学会',
+  [Rating.Hard]: '有印象',
+  [Rating.Good]: '学会了',
+  [Rating.Easy]: '很熟练',
+};
+
+/** 复习/抽查场景评分标签（与复习页按钮一致：1 忘记 / 2 模糊 / 3 记得 / 4 熟练） */
+export const REVIEW_RATING_LABELS: Record<number, string> = {
+  [Rating.Again]: '忘记',
+  [Rating.Hard]: '模糊',
+  [Rating.Good]: '记得',
+  [Rating.Easy]: '熟练',
+};
+
+/** 按场景取评分标签：新学记录用学习文案，复习/抽查用记忆程度文案，与评分按钮保持一致 */
+export function ratingLabel(mode: ReviewLog['mode'], rating: number): string {
+  return (mode === 'learn' ? LEARN_RATING_LABELS : REVIEW_RATING_LABELS)[rating] ?? String(rating);
+}
 
 /** 答题模式 → 中文标签 */
 export const MODE_LABEL: Record<ReviewLog['mode'], string> = {

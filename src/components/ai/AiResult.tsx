@@ -95,7 +95,7 @@ export default function AiResult({ generate, buttonLabel, loadingLabel, display 
         {content && !loading && (
           <button
             onClick={() => setModalOpen(true)}
-            className="rounded-xl px-3 py-2 text-xs font-medium text-brand-600 transition hover:bg-brand-50"
+            className="rounded-xl px-3 py-2 text-xs font-medium text-brand-600 transition hover:bg-brand-50 dark:hover:bg-brand-900/40"
           >
             📖 查看助记
           </button>
@@ -129,7 +129,7 @@ export default function AiResult({ generate, buttonLabel, loadingLabel, display 
                   <button
                     onClick={() => void run()}
                     disabled={loading}
-                    className="rounded-xl px-3 py-1.5 text-xs font-medium text-brand-600 transition hover:bg-brand-50 disabled:opacity-50"
+                    className="rounded-xl px-3 py-1.5 text-xs font-medium text-brand-600 transition hover:bg-brand-50 disabled:opacity-50 dark:hover:bg-brand-900/40"
                   >
                     {loading ? '生成中…' : '🔁 重新生成'}
                   </button>
@@ -179,13 +179,13 @@ export default function AiResult({ generate, buttonLabel, loadingLabel, display 
           >
             <div className="ai-markdown space-y-2 p-4" dangerouslySetInnerHTML={{ __html: mdToHtml(content) }} />
             {overflowing && !expanded && (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-brand-50 to-transparent" />
+              <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-brand-50 to-transparent dark:from-slate-900" />
             )}
           </div>
           {overflowing && (
             <button
               onClick={() => setExpanded((v) => !v)}
-              className="mt-2 rounded-xl px-3 py-1.5 text-xs font-medium text-brand-600 transition hover:bg-brand-50"
+              className="mt-2 rounded-xl px-3 py-1.5 text-xs font-medium text-brand-600 transition hover:bg-brand-50 dark:hover:bg-brand-900/40"
             >
               {expanded ? '收起 ▴' : '展开全部 ▾'}
             </button>

@@ -2,13 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   listWordsWithStatus,
   getInstalledBooks,
+  isCustomWord,
   type WordWithStatus,
 } from '@/services/wordbook';
 import { speak } from '@/lib/tts';
 import { friendlyDue } from '@/lib/format';
 import { ui } from '@/lib/ui';
 import { getLogsForWord } from '@/services/stats';
-import { groupLogsByDay, RATING_META, MODE_LABEL, timeHM, type DayGroup } from '@/lib/history';
+import { groupLogsByDay, RATING_META, ratingLabel, MODE_LABEL, timeHM, type DayGroup } from '@/lib/history';
 
 /** 状态筛选选项（值对应 listWordsWithStatus 的 status 参数） */
 const STATUS_FILTERS = [
@@ -244,9 +245,11 @@ export default function WordsPage() {
                       </div>
                     )}
 
-                    {/* 词频 + 学习状态 */}
+                    {/* 词频（自定义词书显示导入顺序号）+ 学习状态 */}
                     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-400 dark:text-slate-500">
-                      {word.freq != null && <span>COCA 词频 #{word.freq}</span>}
+                      {word.freq != null && (
+                        <span>{isCustomWord(word) ? `词序 #${word.freq}` : `COCA 词频 #${word.freq}`}</span>
+                      )}
                       {userWord ? (
                         <>
                           <span>复习 {userWord.reps} 次</span>
@@ -297,7 +300,7 @@ export default function WordsPage() {
                                         <span
                                           className={`rounded-full px-2 py-0.5 font-medium ${meta.badge}`}
                                         >
-                                          {meta.emoji} {meta.label}
+                                          {meta.emoji} {ratingLabel(l.mode, l.rating)}
                                         </span>
                                         <span className="text-slate-400 dark:text-slate-500">
                                           {MODE_LABEL[l.mode]}

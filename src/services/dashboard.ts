@@ -2,6 +2,7 @@ import { db } from '@/db/schema';
 import { scheduler } from '@/fsrs/scheduler';
 import {
   getDailyStats,
+  getDailyStatsRange,
   getRecentLogs,
   getWeakWords,
   getLearnedByBook,
@@ -12,7 +13,7 @@ import {
 } from '@/services/stats';
 import { fetchManifest, getCustomBooks, getLearnedWordIds } from '@/services/wordbook';
 import { useSettings } from '@/stores/settings';
-import { dateKeyOffset, lastNDays, weekdayShort } from '@/lib/format';
+import { dateKey, dateKeyOffset, shiftDateKey, weekStartOf } from '@/lib/format';
 import { classifyMastery } from '@/lib/mastery';
 import { State, type BookMeta } from '@/types';
 
@@ -22,14 +23,37 @@ import { State, type BookMeta } from '@/types';
 
 export interface HeatmapPoint {
   date: string;
+  /** 总打卡数 = 新学 + 复习（默认口径） */
   count: number;
+  /** 当天新学单词数（按首次学习去重，评分≥2） */
+  newCount: number;
+  /** 当天复习单词数（含抽查） */
+  reviewCount: number;
 }
 
-/** GitHub 风格打卡热力图（最近 26 周） */
+/** 热力图展示的自然周数：固定 15 个完整自然周（周一起点，不随今天漂移） */
+export const HEATMAP_WEEKS = 15;
+
+/** 热力图日期范围：[14 周前的周一, 本周日]，闭区间共 15*7 天 */
+export function heatmapRange(): [string, string] {
+  const start = weekStartOf(dateKeyOffset(-(HEATMAP_WEEKS - 1) * 7));
+  return [start, shiftDateKey(start, HEATMAP_WEEKS * 7 - 1)];
+}
+
+/** GitHub 风格打卡热力图（固定最近 15 个自然周）
+ * 计数口径：新学单词数 + 复习单词数（newCount 按当天首次学习的词去重，复习含抽查），
+ * 不含回炉/重学/回忆确认等重复答题，避免「一个词答 5 次」虚高打卡。
+ * 同时携带新学/复习分量，页面可按「全部 / 新学 / 复习」切换展示。
+ */
 export async function getHeatmapData(): Promise<HeatmapPoint[]> {
-  const days = 26 * 7;
-  const stats = await getDailyStats(days);
-  return stats.map((s) => ({ date: s.date, count: s.totalCount }));
+  const [start, end] = heatmapRange();
+  const stats = await getDailyStatsRange(start, end);
+  return stats.map((s) => ({
+    date: s.date,
+    count: s.newCount + s.reviewCount,
+    newCount: s.newCount,
+    reviewCount: s.reviewCount,
+  }));
 }
 
 export interface TrendPoint {
@@ -135,12 +159,18 @@ export async function getForgettingCurveData(): Promise<ForgettingCurveData> {
   for (const events of byWord.values()) {
     events.sort((a, b) => a.t - b.t);
     for (let i = 1; i < events.length; i++) {
-      const intervalDays = (events[i].t - events[i - 1].t) / 86400000;
+      const prev = events[i - 1];
+      const cur = events[i];
+      // 只统计跨天间隔：同一天内的学习/重学/回炉不是真正的间隔复习，
+      // 否则第一天就会产生「当天回忆率」的假数据（如学习后几分钟重学 → 间隔 0 天）
+      if (dateKey(new Date(prev.t)) === dateKey(new Date(cur.t))) continue;
+      const intervalDays = (cur.t - prev.t) / 86400000;
       if (intervalDays <= 0 || intervalDays > 90) continue;
-      const bucket = Math.floor(intervalDays);
+      // 跨天至少算 1 天（如 23:59 学、次日 00:01 复习 → ceil(0.0014)=1）
+      const bucket = Math.max(1, Math.ceil(intervalDays));
       const b = buckets.get(bucket) ?? { success: 0, total: 0 };
       b.total++;
-      if (events[i].ok) b.success++;
+      if (cur.ok) b.success++;
       buckets.set(bucket, b);
     }
   }
@@ -294,11 +324,6 @@ export async function getDashboardSummary(): Promise<DashboardSummary> {
     getTodayReviewCount(),
   ]);
   return { learnedWords, totalLogs, streak, todayReview };
-}
-
-/** 热力图星期标签（ECharts 日历） */
-export function heatmapWeekLabels(): string[] {
-  return lastNDays(7).map(weekdayShort);
 }
 
 export function trendDateLabel(key: string): string {

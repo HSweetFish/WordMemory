@@ -97,13 +97,6 @@ export function lastNDays(n: number): string[] {
   return out;
 }
 
-/** 星期简称（按东八区日历日） */
-export function weekdayShort(key: string): string {
-  const [y, m, d] = key.split('-').map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return ['日', '一', '二', '三', '四', '五', '六'][dt.getUTCDay()];
-}
-
 // ---- 自然周期工具（周/月，严格按日历周期，用于周报/月报）----
 
 /** 日期 key 所在自然周的周一（一周起点，周一到周日） */

@@ -10,6 +10,7 @@ import {
   getWeakWordData,
   getPosDistribution,
   getDashboardSummary,
+  heatmapRange,
   type HeatmapPoint,
   type TrendPoint,
   type MasterySlice,
@@ -18,12 +19,19 @@ import {
   type WeakWordItem,
   type DashboardSummary,
 } from '@/services/dashboard';
-import { dateKey, dateKeyOffset, shiftDateKey, shiftWeek, shiftMonth, weekLabel, monthLabel } from '@/lib/format';
+import { dateKey, shiftDateKey, shiftWeek, shiftMonth, weekLabel, monthLabel } from '@/lib/format';
 import { ui } from '@/lib/ui';
 import AiResult from '@/components/ai/AiResult';
 import { generatePeriodReport, analyzeWeakWords, type ReportKind } from '@/services/ai';
 
 const MONTHS_CN = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+
+/** 打卡热力图切换：全部 / 新学 / 复习 */
+const HEAT_TABS: { value: 'all' | 'learn' | 'review'; label: string; icon: string }[] = [
+  { value: 'all', label: '全部', icon: '🔥' },
+  { value: 'learn', label: '新学', icon: '📖' },
+  { value: 'review', label: '复习', icon: '🔁' },
+];
 
 /** 统计页：可视化仪表盘 */
 export default function DashboardPage() {
@@ -36,6 +44,8 @@ export default function DashboardPage() {
   const [weak, setWeak] = useState<WeakWordItem[]>([]);
   const [pos, setPos] = useState<{ name: string; value: number }[]>([]);
   const [loading, setLoading] = useState(true);
+  // 热力图口径切换：全部 = 新学 + 复习；可单独看新学或复习
+  const [heatTab, setHeatTab] = useState<'all' | 'learn' | 'review'>('all');
   // AI 周期报告：类型 + 历史偏移（0=当前周期，-1=上周/上月…）
   const [reportKind, setReportKind] = useState<ReportKind>('week');
   const [weekOffset, setWeekOffset] = useState(0);
@@ -83,12 +93,19 @@ export default function DashboardPage() {
   }, []);
 
   // ---- 图表 option ----
-  const heatmapMax = Math.max(1, ...heatmap.map((h) => h.count));
+  // 热力图当前口径取值：全部=新学+复习，或单独新学/复习
+  const heatmapValue = (h: HeatmapPoint) =>
+    heatTab === 'all' ? h.count : heatTab === 'learn' ? h.newCount : h.reviewCount;
+  const heatmapMax = Math.max(1, ...heatmap.map(heatmapValue));
   const heatmapOption: EChartsCoreOption = {
     tooltip: {
       formatter: (p: unknown) => {
         const d = p as { data: [string, number] };
-        return `${d.data[0]}：${d.data[1]} 词`;
+        const pt = heatmap.find((h) => h.date === d.data[0]);
+        if (!pt) return d.data[0];
+        // 「全部」显示新学/复习明细；单独口径显示对应数值
+        if (heatTab === 'all') return `${d.data[0]}：新学 ${pt.newCount} · 复习 ${pt.reviewCount}`;
+        return `${d.data[0]}：${heatTab === 'learn' ? `新学 ${pt.newCount}` : `复习 ${pt.reviewCount}`} 词`;
       },
     },
     visualMap: {
@@ -107,19 +124,19 @@ export default function DashboardPage() {
       left: 30,
       right: 10,
       bottom: 30,
-      range: [dateKeyOffset(-26 * 7), dateKeyOffset(0)],
+      range: heatmapRange(),
       cellSize: ['auto', 15],
       itemStyle: { borderWidth: 2, borderColor: '#fff', borderRadius: 3 },
       splitLine: { show: false },
       yearLabel: { show: false },
-      dayLabel: { firstDay: 1, nameMap: ['一', '二', '三', '四', '五', '六', '日'], color: '#94a3b8' },
+      dayLabel: { firstDay: 1, nameMap: ['日', '一', '二', '三', '四', '五', '六'], color: '#94a3b8' },
       monthLabel: { nameMap: MONTHS_CN, color: '#64748b' },
     },
     series: [
       {
         type: 'heatmap',
         coordinateSystem: 'calendar',
-        data: heatmap.map((h) => [h.date, h.count] as [string, number]),
+        data: heatmap.map((h) => [h.date, heatmapValue(h)] as [string, number]),
       },
     ],
   };
@@ -301,7 +318,24 @@ export default function DashboardPage() {
         <>
           {/* 打卡热力图 */}
           <section className={ui.cardCompact}>
-            <h2 className={`mb-2 ${ui.sectionSub}`}>🔥 打卡热力图（近 26 周）</h2>
+            <div className="mb-2 flex items-center justify-between">
+              <h2 className={ui.sectionSub}>🔥 打卡热力图（近 15 周）</h2>
+              <div className="flex gap-1 rounded-full bg-slate-100 p-1 dark:bg-slate-800">
+                {HEAT_TABS.map((tab) => (
+                  <button
+                    key={tab.value}
+                    onClick={() => setHeatTab(tab.value)}
+                    className={`rounded-full px-3 py-1 text-xs transition ${
+                      heatTab === tab.value
+                        ? 'bg-white text-slate-800 shadow-sm dark:bg-slate-700 dark:text-slate-100'
+                        : 'text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {tab.icon} {tab.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <Chart option={heatmapOption} height={180} />
           </section>
 

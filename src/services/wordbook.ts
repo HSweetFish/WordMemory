@@ -328,6 +328,16 @@ export function customBookName(id: string): string {
   return id.startsWith('custom:') ? id.slice('custom:'.length) : id;
 }
 
+/** 是否为自定义词书 id（'custom' 或 'custom:名称'） */
+export function isCustomBookId(id: string): boolean {
+  return id === 'custom' || id.startsWith('custom:');
+}
+
+/** 词条是否来自自定义词书（自定义词的 freq 是导入顺序号而非 COCA 词频，展示需区分） */
+export function isCustomWord(word: Pick<Word, 'books'>): boolean {
+  return word.books.some(isCustomBookId);
+}
+
 /** 列出全部自定义词书及其词数（从 words 表的 books 标记汇总） */
 export async function getCustomBooks(): Promise<CustomBookInfo[]> {
   const all = await db.words.toArray();

@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { db, resetDatabase } from '@/db/schema';
 import { installBookData } from '@/services/wordbook';
-import { loadLearnQueue, loadReviewQueue, loadRandomQueue, recordRating, resetWordLearning } from '@/services/study';
+import { loadLearnQueue, loadReviewQueue, loadRandomQueue, recordRating, resetWordLearning, migrateLegacyFirstReviewDue } from '@/services/study';
 import { getTodayNewCount } from '@/services/stats';
 import { useSettings } from '@/stores/settings';
-import { dateKey } from '@/lib/format';
+import { dateKey, dayRangeInZone } from '@/lib/format';
 import { Rating, State } from '@/types';
 
 const TEST_BOOK = {
@@ -244,5 +244,30 @@ describe('学习闭环（学习服务 + 会话落库）', () => {
     await recordRating(apple, null, Rating.Good, 'learn', 5000);
     expect(await db.userWords.get('apple')).toBeDefined();
     expect(await getTodayNewCount()).toBe(1);
+    // daily_stats 增量缓存（热力图/趋势图口径）也不虚高：重置后重学不再重复计新学
+    const stat = await db.dailyStats.get(dateKey());
+    expect(stat?.newCount).toBe(1);
+  });
+
+  it('迁移：旧版「24 小时后」首次复习提前到今天 0 点，今天刚学的不动', async () => {
+    const todayStart = dayRangeInZone(dateKey())[0];
+    // 昨晚 21 点学的新词（旧算法排到今晚 21 点到期）→ 应提前到今天 0 点
+    const yesterdayEvening = todayStart - 3 * 3600 * 1000;
+    await db.userWords.put({
+      ...dueCard('apple', yesterdayEvening + 86400000),
+      reps: 1, lastReviewAt: yesterdayEvening, scheduledDays: 1,
+    });
+    // 今天刚学的词（旧算法 due=明天此刻）→ 不应被迁移（间隔才几小时，不能今天复习）
+    const now = Date.now();
+    await db.userWords.put({
+      ...dueCard('banana', now + 86400000),
+      reps: 1, lastReviewAt: now, scheduledDays: 1,
+    });
+    const n = await migrateLegacyFirstReviewDue();
+    expect(n).toBe(1);
+    const apple = await db.userWords.get('apple');
+    expect(apple?.due).toBe(todayStart); // 提前到今天 0 点 → 今天即可复习
+    const banana = await db.userWords.get('banana');
+    expect(banana?.due).toBe(now + 86400000); // 不受影响
   });
 });

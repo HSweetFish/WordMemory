@@ -4,7 +4,7 @@ import { db, resetDatabase } from '@/db/schema';
 import { installBookData } from '@/services/wordbook';
 import { recordRating } from '@/services/study';
 import { useSettings } from '@/stores/settings';
-import { Rating } from '@/types';
+import { Rating, State } from '@/types';
 import {
   getHeatmapData,
   getTrendData,
@@ -14,7 +14,9 @@ import {
   getWeakWordData,
   getPosDistribution,
   getDashboardSummary,
+  heatmapRange,
 } from '@/services/dashboard';
+import { dateKeyOffset } from '@/lib/format';
 
 const WORDS = [
   { w: 'apple', uk: '', us: '', m: ['苹果'], pos: 'n.', ex: [], freq: 10, books: [] },
@@ -42,9 +44,16 @@ describe('仪表盘数据服务', () => {
     expect(summary.todayReview).toBe(1);
 
     const heatmap = await getHeatmapData();
-    expect(heatmap).toHaveLength(26 * 7);
-    const last = heatmap[heatmap.length - 1];
-    expect(last.count).toBe(3);
+    // 固定 15 个完整自然周（周一起点，不随今天漂移）
+    expect(heatmap).toHaveLength(15 * 7);
+    expect(heatmap[0].date).toBe(heatmapRange()[0]);
+    expect(heatmap[heatmap.length - 1].date).toBe(heatmapRange()[1]);
+    // 热力图口径 = 新学单词数 + 复习单词数（答 3 次：apple 新学 1 + cherry 复习 1；banana 没学会不计）
+    const todayPoint = heatmap.find((h) => h.date === dateKeyOffset(0));
+    expect(todayPoint?.count).toBe(2);
+    // 分量：新学 1、复习 1，供「全部 / 新学 / 复习」切换展示
+    expect(todayPoint?.newCount).toBe(1);
+    expect(todayPoint?.reviewCount).toBe(1);
 
     const trend = await getTrendData(30);
     expect(trend).toHaveLength(30);
@@ -126,5 +135,25 @@ describe('仪表盘数据服务', () => {
     // 学习中的卡片也有稳定性（FSRS 首次复习后即计算）
     expect(curve.theoretical.length).toBeGreaterThan(0);
     expect(curve.avgStability).toBeGreaterThan(0);
+  });
+
+  it('遗忘曲线：同一天内的学习/重学不产生间隔样本，跨天复习才统计', async () => {
+    const now = Date.now();
+    // 同一词两条同一天日志（学习 + 几分钟后重学）→ 不构成间隔样本（当天假数据）
+    await db.reviewLogs.add({ wordId: 'apple', rating: 3, elapsedMs: 1000, reviewedAt: now - 300000, scheduledDays: 1, state: State.Review, mode: 'learn' });
+    await db.reviewLogs.add({ wordId: 'apple', rating: 3, elapsedMs: 1000, reviewedAt: now, scheduledDays: 1, state: State.Review, mode: 'learn' });
+    const curve1 = await getForgettingCurveData();
+    expect(curve1.actual).toHaveLength(0);
+
+    // 跨天：两个词 2 天前学习 → 今天复习 → 产生「间隔 2 天」样本（≥2 样本才展示）
+    await db.reviewLogs.add({ wordId: 'banana', rating: 3, elapsedMs: 1000, reviewedAt: now - 86400000 * 2, scheduledDays: 1, state: State.Review, mode: 'learn' });
+    await db.reviewLogs.add({ wordId: 'banana', rating: 4, elapsedMs: 1000, reviewedAt: now, scheduledDays: 1, state: State.Review, mode: 'review' });
+    await db.reviewLogs.add({ wordId: 'cherry', rating: 3, elapsedMs: 1000, reviewedAt: now - 86400000 * 2, scheduledDays: 1, state: State.Review, mode: 'learn' });
+    await db.reviewLogs.add({ wordId: 'cherry', rating: 3, elapsedMs: 1000, reviewedAt: now, scheduledDays: 1, state: State.Review, mode: 'review' });
+    const curve2 = await getForgettingCurveData();
+    expect(curve2.actual.length).toBeGreaterThan(0);
+    expect(curve2.actual[0].days).toBeGreaterThanOrEqual(1);
+    expect(curve2.actual[0].successRate).toBe(100);
+    expect(curve2.actual[0].samples).toBe(2);
   });
 });

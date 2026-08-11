@@ -125,6 +125,45 @@ export async function getDailyStats(days: number): Promise<DailyStat[]> {
   });
 }
 
+/** 从 review_logs 全量重算 daily_stats（修复历史脏数据）
+ * 每次答题的原始记录（review_logs）是唯一事实来源，daily_stats 只是增量缓存；
+ * 旧版本的口径 bug 可能写入错误计数，此函数丢弃缓存、按当前口径重建全部日统计。
+ * 学习时长（durationSec）由会话层累加、日志无法还原，重建时保留旧值。
+ * @returns 重建的统计天数与处理的日志条数
+ */
+export async function rebuildDailyStats(): Promise<{ days: number; logs: number }> {
+  // 1. 保留旧时长（时长无法从日志还原）
+  const oldStats = await db.dailyStats.toArray();
+  const durationMap = new Map(oldStats.map((s) => [s.date, s.durationSec]));
+
+  // 2. 全量日志按天分组
+  const logs = await db.reviewLogs.toArray();
+  const byDate = new Map<string, ReviewLog[]>();
+  for (const log of logs) {
+    const key = dateKey(new Date(log.reviewedAt));
+    const arr = byDate.get(key) ?? [];
+    arr.push(log);
+    byDate.set(key, arr);
+  }
+
+  // 3. 清空缓存，按当前口径重建（与 aggregateDailyStat / ensureDailyStatsRange 完全一致）
+  await db.dailyStats.clear();
+  const stats: DailyStat[] = [...byDate.entries()]
+    .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+    .map(([date, dayLogs]) => ({
+      date,
+      // 新学口径：当天 learn 且评分≥2 的词按 wordId 去重（回炉/重学不重复计）
+      newCount: new Set(dayLogs.filter((l) => l.mode === 'learn' && l.rating >= 2).map((l) => l.wordId)).size,
+      // 复习口径：复习 + 抽查均计入
+      reviewCount: dayLogs.filter((l) => l.mode === 'review' || l.mode === 'random').length,
+      correctCount: dayLogs.filter((l) => l.rating >= 3).length,
+      totalCount: dayLogs.length,
+      durationSec: durationMap.get(date) ?? 0,
+    }));
+  if (stats.length > 0) await db.dailyStats.bulkPut(stats);
+  return { days: stats.length, logs: logs.length };
+}
+
 /** 连续打卡天数（今天有记录算今天，否则从昨天往前数） */
 export async function computeStreak(): Promise<number> {
   const today = dateKey();
@@ -152,11 +191,14 @@ export async function getTodayNewCount(): Promise<number> {
   return new Set(logs.filter((l) => l.mode === 'learn' && l.rating >= 2).map((l) => l.wordId)).size;
 }
 
-/** 今日已复习数量 */
+/**
+ * 今日已复习数量（含抽查，与 daily_stats.reviewCount / 热力图「复习」口径一致：
+ * 抽查也是复习行为，应计入当天打卡与复习统计；配额消耗另行用 getTodayReviewQuotaUsed 只算排程复习）
+ */
 export async function getTodayReviewCount(): Promise<number> {
   const [start] = dayRangeInZone(dateKey());
   const logs = await db.reviewLogs.where('reviewedAt').aboveOrEqual(start).toArray();
-  return logs.filter((l) => l.mode === 'review').length;
+  return logs.filter((l) => l.mode === 'review' || l.mode === 'random').length;
 }
 
 /**

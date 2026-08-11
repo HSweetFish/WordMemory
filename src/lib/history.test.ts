@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Rating } from 'ts-fsrs';
 import type { ReviewLog } from '@/types';
-import { RATING_META, MODE_LABEL, groupLogsByDay, dayLabel } from '@/lib/history';
+import { RATING_META, ratingLabel, MODE_LABEL, groupLogsByDay, dayLabel } from '@/lib/history';
 import { dateKey } from '@/lib/format';
 
 function log(partial: Partial<ReviewLog> & { reviewedAt: number; rating: Rating }): ReviewLog {
@@ -16,12 +16,24 @@ function log(partial: Partial<ReviewLog> & { reviewedAt: number; rating: Rating 
 }
 
 describe('记忆历史工具', () => {
-  it('四级评分都有展示元数据（忘记/勉强/熟练/轻松）', () => {
+  it('四级评分都有展示元数据（忘记/模糊/记得/熟练，与复习按钮一致）', () => {
     expect(RATING_META[Rating.Again].label).toBe('忘记');
-    expect(RATING_META[Rating.Hard].label).toBe('勉强');
-    expect(RATING_META[Rating.Good].label).toBe('熟练');
-    expect(RATING_META[Rating.Easy].label).toBe('轻松');
+    expect(RATING_META[Rating.Hard].label).toBe('模糊');
+    expect(RATING_META[Rating.Good].label).toBe('记得');
+    expect(RATING_META[Rating.Easy].label).toBe('熟练');
     expect(Object.keys(RATING_META).length).toBe(4);
+  });
+
+  it('评分标签按场景区分：学习用「没学会/有印象/学会了/很熟练」，复习/抽查用「忘记/模糊/记得/熟练」', () => {
+    expect(ratingLabel('learn', Rating.Again)).toBe('没学会');
+    expect(ratingLabel('learn', Rating.Hard)).toBe('有印象');
+    expect(ratingLabel('learn', Rating.Good)).toBe('学会了');
+    expect(ratingLabel('learn', Rating.Easy)).toBe('很熟练');
+    expect(ratingLabel('review', Rating.Again)).toBe('忘记');
+    expect(ratingLabel('review', Rating.Hard)).toBe('模糊');
+    expect(ratingLabel('review', Rating.Good)).toBe('记得');
+    expect(ratingLabel('review', Rating.Easy)).toBe('熟练');
+    expect(ratingLabel('random', Rating.Good)).toBe('记得');
   });
 
   it('模式标签：学习/复习/抽查', () => {

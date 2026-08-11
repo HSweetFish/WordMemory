@@ -5,7 +5,7 @@ import { addLearnedWord, invalidateLearnedCache } from '@/services/learned-cache
 import { getTodayNewCount, getTodayReviewQuotaUsed, addReviewStat } from '@/services/stats';
 import { scheduleSync } from '@/services/localfile';
 import { useSettings } from '@/stores/settings';
-import { dateKey } from '@/lib/format';
+import { dateKey, dayRangeInZone } from '@/lib/format';
 import type { Word, UserWord, ReviewLog, Rating } from '@/types';
 import { State } from '@/types';
 
@@ -87,8 +87,10 @@ export async function recordRating(
 ): Promise<{ updated: UserWord; log: ReviewLog }> {
   const now = new Date();
   let card = existing;
-  // 仅首次学习（无卡片新建）计入「今日新学」；回炉/复习不重复计新学数
-  const isNewWord = !card;
+  // 仅「该词今天还没有学习日志」的首次学习计入「今日新学」；
+  // 回忆失败重置后重新学习（今天已有 learn 日志）不再重复计新学数，
+  // 保证 daily_stats 增量缓存与按日志去重的 getTodayNewCount 口径一致
+  const isNewWord = !card && !(await hasLearnLogToday(word.w.toLowerCase()));
   if (!card) {
     const { settings } = useSettings.getState();
     card = scheduler.createCard(word.w, word.books.length ? word.books : settings.activeBooks, now);
@@ -126,6 +128,13 @@ export async function recordRating(
  * - 答题历史（review_logs）保留，可在记忆历史中回看
  * - 今日新学计数按 wordId 去重，重新学习不会导致计数虚高
  */
+/** 该词今天是否已有学习日志（新学计数按词去重：重置后重学不重复计） */
+async function hasLearnLogToday(wordId: string): Promise<boolean> {
+  const [start] = dayRangeInZone(dateKey());
+  const logs = await db.reviewLogs.where('wordId').equals(wordId).toArray();
+  return logs.some((l) => l.mode === 'learn' && l.reviewedAt >= start);
+}
+
 export async function resetWordLearning(wordId: string): Promise<boolean> {
   const id = wordId.toLowerCase();
   const existing = await db.userWords.get(id);
@@ -134,4 +143,31 @@ export async function resetWordLearning(wordId: string): Promise<boolean> {
   invalidateLearnedCache(); // 词不在 user_words，需重新出现在新学队列
   scheduleSync();
   return true;
+}
+
+/** 一次性迁移：旧版本把新词首次复习排到「24 小时后」（昨晚学的词今晚才到期），
+ * 改为「明天 0 点」后，把「昨天学的、尚未首次复习」的卡片提前到今天 0 点，
+ * 让用户今天就能复习昨天背的词。
+ * 识别特征：首次复习排程（reps=1、Review、scheduledDays=1）、上次复习在昨天或更早、
+ * due 晚于今天 0 点（旧算法排到了 24h 后）；今天刚学的词因 lastReviewAt 是今天而不受影响。
+ * @returns 迁移的卡片数
+ */
+export async function migrateLegacyFirstReviewDue(): Promise<number> {
+  const todayStart = dayRangeInZone(dateKey())[0];
+  const cards = await db.userWords.toArray();
+  let migrated = 0;
+  for (const c of cards) {
+    if (
+      c.reps === 1 &&
+      c.state === State.Review &&
+      c.scheduledDays === 1 &&
+      (c.lastReviewAt ?? 0) < todayStart &&
+      c.due > todayStart
+    ) {
+      await db.userWords.put({ ...c, due: todayStart });
+      migrated++;
+    }
+  }
+  if (migrated > 0) scheduleSync();
+  return migrated;
 }

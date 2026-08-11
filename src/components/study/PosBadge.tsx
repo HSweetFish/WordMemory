@@ -7,16 +7,19 @@ interface PosBadgeProps {
   className?: string;
 }
 
-/** 词性徽章配色：按词性类型着色（n. 蓝 / 动词 绿 / adj. 紫 / adv. 橙 / 其他 灰） */
+/**
+ * 词性徽章配色：仅使用品牌体系内色（sky 主色 / emerald 成功 / amber 警告 / slate 中性）。
+ * n. 蓝、动词 绿、修饰词（adj./adv.）amber、稀有词性（prep./conj./pron./num./aux./int./art.）灰。
+ */
 const POS_COLORS: Record<string, string> = {
   'n.': 'bg-sky-50 text-sky-600 dark:bg-sky-950/60 dark:text-sky-300',
   'v.': 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-300',
   'vt.': 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-300',
   'vi.': 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-300',
-  'adj.': 'bg-violet-50 text-violet-600 dark:bg-violet-950/60 dark:text-violet-300',
+  'adj.': 'bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-300',
   'adv.': 'bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-300',
-  'prep.': 'bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-300',
-  'conj.': 'bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-300',
+  'prep.': 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
+  'conj.': 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
   'pron.': 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
   'num.': 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',
   'aux.': 'bg-slate-100 text-slate-500 dark:bg-slate-800 dark:text-slate-400',

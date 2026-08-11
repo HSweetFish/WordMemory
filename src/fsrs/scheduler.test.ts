@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Rating, State } from 'ts-fsrs';
 import { scheduler, getScheduler, setSchedulerKind, type SchedulerKind } from '@/fsrs/scheduler';
+import { dateKey, shiftDateKey, dayRangeInZone } from '@/lib/format';
 
 const NOW = new Date('2026-08-05T00:00:00+08:00');
 
@@ -25,13 +26,25 @@ describe('FSRS 排程引擎', () => {
     expect(card.bookIds).toEqual(['cet4']);
   });
 
-  it('新词首次评分：直接进入 Review，第一次复习在第二天', () => {
+  it('新词首次评分：直接进入 Review，第一次复习排到「明天 0 点」', () => {
     const card = scheduler.createCard('apple', ['cet4'], NOW);
     const r = scheduler.review(card, Rating.Good, NOW);
     expect(r.state).toBe(State.Review); // 不安排当天学习步骤
     expect(r.scheduledDays).toBe(1); // 第一次复习 = 第二天
-    expect(r.updated.due).toBe(NOW.getTime() + 86400000);
+    // NOW 恰好是东八区 0 点 → 明天 0 点 = 24 小时后（旧断言在此场景下数值碰巧相等）
+    const tomorrowStart = dayRangeInZone(shiftDateKey(dateKey(NOW), 1))[0];
+    expect(r.updated.due).toBe(tomorrowStart);
     expect(r.updated.lastRating).toBe(Rating.Good);
+  });
+
+  it('晚上学的新词：首次复习提前到「明天 0 点」，而非 24 小时后', () => {
+    const evening = new Date('2026-08-05T21:00:00+08:00'); // 晚上 9 点学习
+    const card = scheduler.createCard('apple', ['cet4'], evening);
+    const r = scheduler.review(card, Rating.Good, evening);
+    const tomorrowStart = dayRangeInZone(shiftDateKey(dateKey(evening), 1))[0];
+    expect(r.updated.due).toBe(tomorrowStart);
+    // 明天 0 点 < 24 小时后（次日 21 点）——早上起来就能复习，不用等到晚上
+    expect(r.updated.due).toBeLessThan(evening.getTime() + 86400000);
   });
 
   it('多轮复习后进入 Review 且间隔递增', () => {

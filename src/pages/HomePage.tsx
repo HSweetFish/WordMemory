@@ -68,7 +68,7 @@ export default function HomePage() {
         <div className="relative flex items-start justify-between">
           <div>
             <h1 className="text-2xl font-bold">欢迎回来 👋</h1>
-            <p className="mt-1 text-sm text-brand-100">每天一点点，FSRS 遗忘曲线帮你记住每一个词。</p>
+            <p className="mt-1 text-sm text-brand-100">新词和复习都由遗忘曲线排好，到点打开就能学。</p>
           </div>
           {stats && stats.streak > 0 && (
             <div className="bg-accent-gradient rounded-xl px-3 py-2 text-center text-white">

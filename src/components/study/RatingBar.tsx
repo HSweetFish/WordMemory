@@ -38,7 +38,7 @@ export default function RatingBar({ onRate, disabled, correct, mode = 'review' }
       )}
       {correct === false && (
         <div className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-center text-sm font-medium text-red-600 dark:bg-red-950/50 dark:text-red-300">
-          {mode === 'learn' ? '❌ 答错了，选「没学会」会再学一遍' : '❌ 答错了，按「忘记」会更快安排复习'}
+          {mode === 'learn' ? '❌ 答错了，选「没学会」会再学一遍' : '❌ 答错了，选 1-2 会再考一遍'}
         </div>
       )}
       <div className="grid grid-cols-4 gap-2">
@@ -56,7 +56,7 @@ export default function RatingBar({ onRate, disabled, correct, mode = 'review' }
         ))}
       </div>
       <div className="mt-2 text-center text-xs text-slate-400">
-        {mode === 'learn' ? '选 1-2 会再学一遍，3-4 视为掌握，本轮结束后统一回忆确认' : '评分决定下次复习间隔（遗忘曲线）'}
+        {mode === 'learn' ? '选 1-2 会再学一遍，3-4 视为掌握，本轮结束后统一回忆确认' : '选 1-2 会再考一遍，3-4 通过并决定下次复习间隔'}
       </div>
     </div>
   );

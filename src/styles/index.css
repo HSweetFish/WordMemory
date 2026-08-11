@@ -28,19 +28,6 @@ body {
   @apply bg-canvas text-slate-800 antialiased dark:bg-slate-950 dark:text-slate-100;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  /* 页面背景：浅绿色系渐变光晕（浅色模式）——上绿、中青、下浅蓝，呼应主体浅蓝 */
-  background-image:
-    radial-gradient(1000px 520px at 8% -10%, rgba(52, 211, 153, 0.16), transparent 62%),
-    radial-gradient(900px 480px at 102% 6%, rgba(56, 189, 248, 0.12), transparent 58%),
-    radial-gradient(820px 540px at 50% 112%, rgba(134, 239, 172, 0.12), transparent 62%);
-  background-attachment: fixed;
-}
-.dark body {
-  /* 深色模式：深绿黑底 + 深青/深蓝光晕 */
-  background-image:
-    radial-gradient(1100px 520px at 8% -10%, rgba(16, 185, 129, 0.12), transparent 62%),
-    radial-gradient(900px 480px at 102% 6%, rgba(14, 165, 233, 0.1), transparent 58%),
-    radial-gradient(800px 520px at 50% 115%, rgba(20, 184, 166, 0.08), transparent 60%);
 }
 
 /* ===== 品牌渐变工具类（全站统一使用） ===== */
@@ -56,9 +43,9 @@ body {
 .bg-hero-gradient {
   background-image: linear-gradient(135deg, #0369a1 0%, #0ea5e9 52%, #22d3ee 100%);
 }
-/* 柔和品牌渐变（卡片背面色 / AI 结果容器） */
+/* 柔和品牌渐变（卡片背面色 / AI 结果容器）：低透明天蓝 → 青 */
 .bg-brand-soft-gradient {
-  background-image: linear-gradient(160deg, rgba(14, 165, 233, 0.08), rgba(56, 189, 248, 0.05) 55%, rgba(45, 212, 191, 0.06));
+  background-image: linear-gradient(135deg, rgba(14, 165, 233, 0.08), rgba(45, 212, 191, 0.06));
 }
 /* 渐变文字 */
 .text-brand-gradient {
@@ -85,9 +72,9 @@ body {
   opacity: 0.45;
   pointer-events: none;
 }
-/* 渐变进度条：浅蓝 → 天蓝 → 青 */
+/* 渐变进度条：与主渐变一致（135deg 天蓝 → 天蓝深） */
 .progress-gradient {
-  background-image: linear-gradient(90deg, #38bdf8, #0ea5e9 55%, #0284c7);
+  background-image: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
 }
 
 /* ===== 点缀色：橙色（orange）与高级色 ===== */
@@ -99,9 +86,6 @@ body {
 }
 .text-accent {
   color: #f97316;
-}
-.bg-accent-soft {
-  background-image: linear-gradient(160deg, rgba(251, 146, 60, 0.12), rgba(249, 115, 22, 0.06));
 }
 
 /* 卡片悬浮光晕（首页入口等） */
@@ -138,10 +122,10 @@ body {
 .ai-markdown ol { @apply list-decimal pl-5; }
 .ai-markdown li { margin: 0.15rem 0; }
 .ai-markdown code {
-  @apply rounded bg-white px-1 py-0.5 font-mono text-[12px];
+  @apply rounded bg-white px-1 py-0.5 font-mono text-[12px] dark:bg-slate-800 dark:text-slate-200;
 }
 .ai-markdown pre {
-  @apply my-2 overflow-x-auto rounded-xl bg-white p-3;
+  @apply my-2 overflow-x-auto rounded-xl bg-white p-3 dark:border dark:border-slate-700 dark:bg-slate-800/80;
 }
 .ai-markdown pre code { @apply bg-transparent p-0; }
 .ai-markdown blockquote {

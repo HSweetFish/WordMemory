@@ -1,4 +1,5 @@
 import { fsrs, generatorParameters, Rating, State, createEmptyCard, type Card, type Grade } from 'ts-fsrs';
+import { dateKey, shiftDateKey, dayRangeInZone } from '@/lib/format';
 import type { UserWord } from '@/types';
 
 /**
@@ -110,9 +111,11 @@ class FSRSImpl implements IScheduler {
     // 避免没学过的词直接获得过高的初始稳定性（后续间隔暴涨）
     const effective = userWord.state === State.New && rating === Rating.Easy ? Rating.Good : rating;
     const item = f.repeat(toCard(userWord), now)[effective as Grade];
-    // 新词首次评分：不安排当天/两天后的学习步骤，强制第一次复习在第二天（明天）
+    // 新词首次评分：强制第一次复习排到「明天 0 点」（东八区日历日），而不是 24 小时后。
+    // 昨晚学的词今天 0 点后即可复习，符合「隔天复习」直觉；白天学的词第二天一早就能复习。
     if (userWord.state === State.New) {
-      item.card.due = new Date(now.getTime() + 86400000);
+      const tomorrowStart = dayRangeInZone(shiftDateKey(dateKey(now), 1))[0];
+      item.card.due = new Date(tomorrowStart);
       item.card.scheduled_days = 1;
     }
     const updated: UserWord = {

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import type { Word } from '@/types';
 import { speak, stopSpeak } from '@/lib/tts';
+import { isCustomWord } from '@/services/wordbook';
 import AiResult from '@/components/ai/AiResult';
 import PosBadge from '@/components/study/PosBadge';
 import { meaningLines } from '@/lib/meaning';
@@ -29,7 +30,7 @@ export default function WordCard({ word, revealed, onReveal, autoSpeak = true }:
   return (
     <div className="perspective-1000 select-none">
       <div
-        className={`preserve-3d relative h-72 w-full cursor-pointer transition-transform duration-500 ${
+        className={`preserve-3d relative h-72 w-full cursor-pointer transition-transform duration-[250ms] ${
           revealed ? 'rotate-y-180' : ''
         }`}
         onClick={onReveal}
@@ -74,7 +75,7 @@ export default function WordCard({ word, revealed, onReveal, autoSpeak = true }:
           </div>
           {word.freq != null && (
             <div className="absolute right-3 top-3 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-400 dark:bg-slate-800 dark:text-slate-500">
-              词频 #{word.freq}
+              {isCustomWord(word) ? `词序 #${word.freq}` : `词频 #${word.freq}`}
             </div>
           )}
           <AiResult

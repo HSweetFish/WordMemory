@@ -4,6 +4,7 @@ import { useSettings, DEFAULT_SETTINGS } from '@/stores/settings';
 import AiConfigForm from '@/components/ai/AiConfigForm';
 import { downloadBackup, restoreBackup } from '@/services/dataio';
 import { clearLearningProgress, resetAllData } from '@/db/schema';
+import { rebuildDailyStats } from '@/services/stats';
 import { requestNotificationPermission } from '@/hooks/useReminder';
 import { ui } from '@/lib/ui';
 import {
@@ -151,6 +152,25 @@ export default function SettingsPage() {
       flash(true, '✅ 学习数据已清空，可以重新开始背了');
     } catch (e) {
       flash(false, `清空失败：${e instanceof Error ? e.message : '未知错误'}`);
+    } finally {
+      setBusy('');
+    }
+  };
+
+  const onRebuildStats = async () => {
+    if (
+      !window.confirm(
+        '将根据全部答题记录重新计算每日统计（热力图 / 趋势图 / 连续打卡等）。\n\n不会删除任何学习数据，答题记录本身不会改动。确定继续？',
+      )
+    )
+      return;
+    setBusy('rebuild');
+    try {
+      const { days, logs } = await rebuildDailyStats();
+      scheduleSync(); // 本地同步文件里的统计一并更新
+      flash(true, `✅ 已重建 ${days} 天的统计（依据 ${logs} 条答题记录），图表数据已刷新`);
+    } catch (e) {
+      flash(false, `重建失败：${e instanceof Error ? e.message : '未知错误'}`);
     } finally {
       setBusy('');
     }
@@ -375,6 +395,13 @@ export default function SettingsPage() {
             className={ui.btnDangerOutline}
           >
             ♻️ 恢复默认设置
+          </button>
+          <button
+            onClick={() => void onRebuildStats()}
+            disabled={busy === 'rebuild'}
+            className={ui.btnSecondary}
+          >
+            {busy === 'rebuild' ? '重建中…' : '🔧 重建统计数据'}
           </button>
           <button
             onClick={() => void onClearProgress()}

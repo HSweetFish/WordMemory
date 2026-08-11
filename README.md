@@ -2,7 +2,7 @@
 
 > 🌐 **在线体验**：https://hsweetfish.github.io/WordMemory/ （无需安装，浏览器打开即用，首次访问后支持离线）
 >
-> 🏷 **最新版本**：[v0.1.0](https://github.com/HSweetFish/WordMemory/releases) · 版本迭代规范见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+> 🏷 **最新版本**：[v0.2.0](https://github.com/HSweetFish/WordMemory/releases) · 版本迭代规范见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 本地优先（local-first）的背单词 Web 应用（PWA）：
 
@@ -18,11 +18,11 @@
 | 页面 | 说明 |
 |---|---|
 | 首页 | 今日新学 / 待复习双入口卡片、连续打卡、概览 |
-| 学习 | 翻转卡片（音标/释义/例句/Web TTS 发音）、四选一测试、拼写模式、键盘快捷键 |
-| 复习 | FSRS 到期词复习队列，答错立即降级回炉 |
-| 统计 | ECharts 仪表盘：热力图 / 趋势 / 掌握度 / 遗忘曲线 / 词库进度 / 薄弱分析（含 AI 周报） |
+| 学习 | 翻转卡片（音标/释义/例句/Web TTS 发音）、四选一测试、拼写模式、学完两步式中文回忆确认、键盘快捷键 |
+| 复习 | FSRS 到期词复习队列，按组加载，答错当场回炉再考 |
+| 统计 | ECharts 仪表盘：热力图（全部/新学/复习切换）/ 趋势 / 掌握度 / 遗忘曲线 / 词库进度 / 薄弱分析（含 AI 周报），支持重建统计数据 |
 | 词库 | 6 大内置词库安装/卸载 + JSON/CSV 自定义导入 |
-| 设置 | 每日配额、提醒通知、深色模式、AI 配置、数据导出/恢复备份 |
+| 设置 | 每日配额、提醒通知、深色模式、AI 配置、数据导出/恢复备份、重建统计 |
 
 内置词库：**CET4（四级）、CET6（六级）、考研、雅思、托福、COCA 2 万词频**，共 34,150 词条（100% 带词性、97% 带词频、35% 带例句）。
 
@@ -34,7 +34,7 @@
 - **存储**：Dexie.js（IndexedDB）：`words` / `user_words` / `review_logs` / `daily_stats`
 - **排程**：ts-fsrs v5（FSRS 算法）
 - **图表**：Apache ECharts 6（按需引入 + 路由级代码分割）
-- **测试**：Vitest + fake-indexeddb（113 个单测/集成测试）
+- **测试**：Vitest + fake-indexeddb（125 个单测/集成测试）
 
 ## 环境要求
 
@@ -47,7 +47,7 @@
 ```bash
 npm install        # 安装依赖
 npm run dev        # 开发服务器 http://localhost:5173
-npm test           # 运行全部测试（113 个）
+npm test           # 运行全部测试（125 个）
 npm run build      # 类型检查 + 生产构建 → dist/
 npm run preview    # 本地预览生产构建
 ```
@@ -60,8 +60,8 @@ npm run preview    # 本地预览生产构建
 ## 使用说明
 
 1. **首次使用**：进入「词库」页安装至少一个词库（自动加入学习队列）
-2. **学习新词**：首页 → 今日新学 → 翻转卡片认识 → 四选一/拼写练习 → 自评
-3. **复习**：FSRS 按遗忘曲线自动排程（约 1天 → 3天 → 7天 → 16天 → 35天…），答错立即回炉
+2. **学习新词**：首页 → 今日新学 → 翻转卡片认识 → 四选一/拼写练习 → 自评 → 学完后两步式中文回忆确认（确实记住才毕业，记错自动清空重学）
+3. **复习**：FSRS 按遗忘曲线自动排程（约 1天 → 3天 → 7天 → 16天 → 35天…），按组加载，评 1-2 当场回炉再考
 4. **AI 分析**：设置页填入 API Key（支持自定义 Base URL 与模型），统计页生成周报/薄弱词清单，单词卡一键 AI 助记
 5. **自定义词表**：词库页导入 JSON（qwerty-learner 格式）或 CSV（表头 `name,trans,usphone,ukphone,sentence,pos`），格式详见 [docs/IMPORT_FORMAT.md](docs/IMPORT_FORMAT.md)
 
