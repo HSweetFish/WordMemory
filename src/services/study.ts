@@ -87,10 +87,13 @@ export async function recordRating(
 ): Promise<{ updated: UserWord; log: ReviewLog }> {
   const now = new Date();
   let card = existing;
-  // 仅「该词今天还没有学习日志」的首次学习计入「今日新学」；
-  // 回忆失败重置后重新学习（今天已有 learn 日志）不再重复计新学数，
-  // 保证 daily_stats 增量缓存与按日志去重的 getTodayNewCount 口径一致
-  const isNewWord = !card && !(await hasLearnLogToday(word.w.toLowerCase()));
+  // 今日新学计数口径（与按日志去重的 getTodayNewCount / 全量重建完全一致）：
+  // 当天「learn 且评分≥2」的词按 wordId 去重——首答「没学会」(Again) 不计数，
+  // 之后答对才算学会并计入；回忆失败重置后重新学习（当天已算过学会）不重复计。
+  // 必须在日志写入前判断，否则查询会包含当前这条日志。
+  const isNewWord = rating >= 2 && !(await hasLearnLogToday(word.w.toLowerCase(), 2));
+  // 复习词数去重标志：该词今天是否还没有 review/random 日志（同样在写入前判断）
+  const isNewReview = mode !== 'learn' && !(await hasReviewLogToday(word.w.toLowerCase()));
   if (!card) {
     const { settings } = useSettings.getState();
     card = scheduler.createCard(word.w, word.books.length ? word.books : settings.activeBooks, now);
@@ -114,7 +117,7 @@ export async function recordRating(
 
   // 增量更新当日统计（时长按秒计，粗略按每题 15 秒基线 + 反应时长）
   const durationSec = Math.max(5, Math.round(elapsedMs / 1000) + 10);
-  await addReviewStat(dateKey(now), mode, rating, durationSec, isNewWord);
+  await addReviewStat(dateKey(now), mode, rating, durationSec, { isNewWord, isNewReview });
   // 数据已变更：触发本地文件夹自动同步（防抖，未配置时静默跳过）
   scheduleSync();
   return { updated, log };
@@ -128,11 +131,41 @@ export async function recordRating(
  * - 答题历史（review_logs）保留，可在记忆历史中回看
  * - 今日新学计数按 wordId 去重，重新学习不会导致计数虚高
  */
-/** 该词今天是否已有学习日志（新学计数按词去重：重置后重学不重复计） */
-async function hasLearnLogToday(wordId: string): Promise<boolean> {
+/** 一次性迁移：历史排程的 due 是「上次复习时刻 + N 天」的精确时间戳，
+ * 到期时刻散布在一天内（如 8/9 21:37 学的词 8/11 21:37 才到期，用户上午
+ * 复习完、晚上又陆续到期冒出来）。改为把 due 对齐到其所在东八区日历日的
+ * 0 点（最多提前 23:59，不跨天），让「当天到期」的词当天 0 点后即可见、
+ * 一天只有一批复习。幂等：已是 0 点的卡不动。
+ * @returns 迁移的卡片数
+ */
+export async function alignDueToDayStart(): Promise<number> {
+  const cards = await db.userWords.toArray();
+  let migrated = 0;
+  for (const c of cards) {
+    if (c.due <= 0) continue;
+    const dayStart = dayRangeInZone(dateKey(new Date(c.due)))[0];
+    if (c.due !== dayStart) {
+      await db.userWords.put({ ...c, due: dayStart });
+      migrated++;
+    }
+  }
+  if (migrated > 0) scheduleSync();
+  return migrated;
+}
+
+/** 该词今天是否已有学习日志（新学计数按词去重：重置后重学不重复计）。
+ * minRating 用于「是否已学会」判定：只统计 learn 且评分≥minRating 的日志。 */
+async function hasLearnLogToday(wordId: string, minRating = 1): Promise<boolean> {
   const [start] = dayRangeInZone(dateKey());
   const logs = await db.reviewLogs.where('wordId').equals(wordId).toArray();
-  return logs.some((l) => l.mode === 'learn' && l.reviewedAt >= start);
+  return logs.some((l) => l.mode === 'learn' && l.rating >= minRating && l.reviewedAt >= start);
+}
+
+/** 该词今天是否已有复习/抽查日志（复习词数按词去重：回炉补考不重复计） */
+async function hasReviewLogToday(wordId: string): Promise<boolean> {
+  const [start] = dayRangeInZone(dateKey());
+  const logs = await db.reviewLogs.where('wordId').equals(wordId).toArray();
+  return logs.some((l) => l.mode !== 'learn' && l.reviewedAt >= start);
 }
 
 export async function resetWordLearning(wordId: string): Promise<boolean> {

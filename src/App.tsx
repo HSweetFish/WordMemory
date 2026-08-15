@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 import { HashRouter, Routes, Route } from 'react-router-dom';
 import Layout from '@/components/Layout';
+import ErrorBoundary from '@/components/ErrorBoundary';
 import HomePage from '@/pages/HomePage';
 import LearnPage from '@/pages/LearnPage';
 import ReviewPage from '@/pages/ReviewPage';
@@ -15,8 +16,10 @@ const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 export default function App() {
   return (
     <HashRouter>
-      <Suspense fallback={<div className="py-20 text-center text-slate-400">加载中…</div>}>
-        <Routes>
+      {/* 错误边界包在 Suspense 外层：任意路由渲染崩溃都不白屏，兜底可重试/回首页 */}
+      <ErrorBoundary>
+        <Suspense fallback={<div className="py-20 text-center text-slate-400">加载中…</div>}>
+          <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/learn" element={<LearnPage />} />
@@ -29,6 +32,7 @@ export default function App() {
           </Route>
         </Routes>
       </Suspense>
+      </ErrorBoundary>
     </HashRouter>
   );
 }

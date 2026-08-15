@@ -14,7 +14,7 @@ vi.mock('@/services/stats', () => ({
   getTodayReviewQuotaUsed: vi.fn().mockResolvedValue(0),
 }));
 vi.mock('@/stores/settings', () => ({
-  useSettings: { getState: () => ({ settings: { dailyNewLimit: 100, dailyReviewLimit: 100, groupSize: 10 } }) },
+  useSettings: { getState: () => ({ settings: { dailyNewLimit: 100, dailyReviewLimit: 100, groupSize: 10, reviewGroupSize: 10 } }) },
 }));
 
 import { useSession } from './session';
@@ -92,6 +92,53 @@ describe('学习会话状态机', () => {
     expect(useSession.getState().initialTotal).toBe(3); // 分母不变
     expect(useSession.getState().doneCount).toBe(0); // 未掌握不计完成
     expect(useSession.getState().status).toBe('running');
+  });
+
+  it('快速连续评分只生效一次：上一笔落库未完成时丢弃新评分（并发保护）', async () => {
+    vi.mocked(loadLearnQueue).mockResolvedValue([WORDS[0]]);
+    await useSession.getState().start('learn');
+
+    // 第一次评分挂起（模拟慢的 DB 写入），期间用户又点了第二次评分
+    let resolveFirst!: (v: { updated: UserWord; log: ReviewLog }) => void;
+    const pending = new Promise<{ updated: UserWord; log: ReviewLog }>((r) => {
+      resolveFirst = r;
+    });
+    vi.mocked(recordRating).mockReturnValueOnce(pending);
+    vi.mocked(recordRating).mockResolvedValue({ updated: cardFor('apple'), log: logFor('apple', 3) });
+
+    const p1 = useSession.getState().rate(3); // 挂起中，持锁
+    const p2 = useSession.getState().rate(4); // 锁未释放 → 直接丢弃
+    resolveFirst({ updated: cardFor('apple'), log: logFor('apple', 3) });
+    await Promise.all([p1, p2]);
+
+    expect(recordRating).toHaveBeenCalledTimes(1); // 只落库一次
+    expect(useSession.getState().index).toBe(1); // 只推进一格
+    expect(useSession.getState().doneCount).toBe(1);
+    expect(useSession.getState().attemptCount).toBe(1); // 第二次评分未计数
+  });
+
+  it('回忆确认并发保护：确认挂起时重复触发只生效一次', async () => {
+    vi.mocked(loadLearnQueue).mockResolvedValue([WORDS[0]]);
+    await useSession.getState().start('learn');
+    vi.mocked(recordRating).mockResolvedValue({ updated: cardFor('apple'), log: logFor('apple', 4) });
+    await useSession.getState().rate(4);
+    expect(useSession.getState().phase).toBe('recall');
+
+    // 第一次「记错了」挂起（模拟慢的重置），期间用户又点了一次确认
+    let resolveReset!: (v: boolean) => void;
+    const pending = new Promise<boolean>((r) => {
+      resolveReset = r;
+    });
+    vi.mocked(resetWordLearning).mockReturnValueOnce(pending);
+
+    const p1 = useSession.getState().confirmRecall(false); // 挂起中，持锁
+    const p2 = useSession.getState().confirmRecall(true); // 锁未释放 → 直接丢弃
+    resolveReset(true);
+    await Promise.all([p1, p2]);
+
+    expect(resetWordLearning).toHaveBeenCalledTimes(1); // 只重置一次
+    expect(useSession.getState().relearnQueue).toHaveLength(1);
+    expect(useSession.getState().attemptCount).toBe(2); // 只有第一次确认计数（rate 1 + 确认 1）
   });
 
   it('学习模式评 3/4 掌握：不暂停，攒入批量回忆列表，本轮学完才进入回忆确认', async () => {
@@ -293,6 +340,29 @@ describe('学习会话状态机', () => {
     expect(useSession.getState().phase).toBe('study');
     expect(useSession.getState().doneCount).toBe(1);
     expect(useSession.getState().status).toBe('finished');
+    // 完成页单词列表：记录本次完成的词与最终评分
+    expect(useSession.getState().doneWords).toEqual([{ word: WORDS[0], rating: 3 }]);
+  });
+
+  it('完成页单词列表：复习回炉的词只记最终通过评分，按词去重', async () => {
+    vi.mocked(loadReviewQueue).mockResolvedValue([
+      { word: WORDS[0], userWord: cardFor('apple') },
+      { word: WORDS[1], userWord: cardFor('banana') },
+    ]);
+    await useSession.getState().start('review');
+    // apple 先答错回炉，再答对完成
+    vi.mocked(recordRating).mockResolvedValue({ updated: cardFor('apple'), log: logFor('apple', 1) });
+    await useSession.getState().rate(1);
+    expect(useSession.getState().doneWords).toHaveLength(0); // 答错不计入完成列表
+    // apple 回炉再答对（队列第 3 个）→ 完成，只记一条（评分 3）
+    vi.mocked(recordRating).mockResolvedValue({ updated: cardFor('banana'), log: logFor('banana', 4) });
+    await useSession.getState().rate(4); // banana
+    vi.mocked(recordRating).mockResolvedValue({ updated: cardFor('apple'), log: logFor('apple', 3) });
+    await useSession.getState().rate(3); // apple（队尾回炉）
+    const done = useSession.getState().doneWords;
+    expect(done).toHaveLength(2); // apple + banana，去重
+    expect(done.map((d) => d.word.w)).toEqual(['banana', 'apple']);
+    expect(done.find((d) => d.word.w === 'apple')?.rating).toBe(3); // 最终评分
   });
 
   it('复习模式答错(1)当场回炉，答对才计入完成', async () => {

@@ -100,6 +100,16 @@ describe('数据层', () => {
     expect((await db.words.get('apple'))?.m).toEqual(['苹果；苹果树']);
   });
 
+  it('CSV 解析：RFC 4180 双引号转义（"" 输出字面引号，释义不错位）', () => {
+    // trans 含字面双引号：Excel/标准 CSV 用 "" 转义，字段整体用引号包裹
+    const csv = 'name,trans,sentence\nquote,"he said ""hi""","She asked, ""really?"""\nplain,普通释义,\n';
+    const words = parseCustomCsv(csv);
+    expect(words).toHaveLength(2);
+    expect(words[0].m).toEqual(['he said "hi"']); // 转义引号还原为字面引号
+    expect(words[0].ex).toEqual(['She asked, "really?"']); // 引号内逗号不被拆列
+    expect(words[1].m).toEqual(['普通释义']);
+  });
+
   it('自定义导入：支持 freq 字段（CSV 列 / JSON 字段）', async () => {
     const csv = 'name,trans,freq\nfoo,释义一,5\nbar,释义二,\n';
     const fromCsv = parseCustomCsv(csv);

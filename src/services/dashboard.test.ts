@@ -44,8 +44,8 @@ describe('仪表盘数据服务', () => {
     expect(summary.todayReview).toBe(1);
 
     const heatmap = await getHeatmapData();
-    // 固定 15 个完整自然周（周一起点，不随今天漂移）
-    expect(heatmap).toHaveLength(15 * 7);
+    // 固定 12 个完整自然周（周一起点，不随今天漂移）
+    expect(heatmap).toHaveLength(12 * 7);
     expect(heatmap[0].date).toBe(heatmapRange()[0]);
     expect(heatmap[heatmap.length - 1].date).toBe(heatmapRange()[1]);
     // 热力图口径 = 新学单词数 + 复习单词数（答 3 次：apple 新学 1 + cherry 复习 1；banana 没学会不计）
@@ -111,6 +111,40 @@ describe('仪表盘数据服务', () => {
     expect(pos.find((p) => p.name === '副词')?.value).toBe(1);
   });
 
+  it('薄弱词：回忆确认删卡重建后，历史答错次数不丢失', async () => {
+    // 模拟学习流程：学 apple 答错 3 次（卡片 wrongCount=3）
+    for (let i = 0; i < 3; i++) {
+      const card = await db.userWords.get('apple');
+      await recordRating(WORDS[0], card ?? null, Rating.Again, 'learn', 1000);
+    }
+    expect((await db.userWords.get('apple'))?.wrongCount).toBe(3);
+    // 回忆确认记错 → resetWordLearning 删卡（卡片 wrongCount 清零）
+    await db.userWords.delete('apple');
+    // 薄弱词仍按日志统计出 3 次答错
+    const weak = await getWeakWordData(10);
+    expect(weak.find((w) => w.name === 'apple')?.wrongCount).toBe(3);
+  });
+
+  it('薄弱词：Hard(模糊) 与 Again(没记住) 都计入，明细分开', async () => {
+    // apple：Again 1 次 + Hard 1 次 → 薄弱 2 次；banana：仅 Hard 1 次 → 薄弱 1 次
+    await recordRating(WORDS[0], null, Rating.Again, 'learn', 1000);
+    const appleCard = await db.userWords.get('apple');
+    await recordRating(WORDS[0], appleCard ?? null, Rating.Hard, 'review', 1000);
+    await recordRating(WORDS[1], null, Rating.Hard, 'learn', 1000);
+
+    const weak = await getWeakWordData(10);
+    const apple = weak.find((w) => w.name === 'apple');
+    expect(apple?.wrongCount).toBe(2);
+    expect(apple?.againCount).toBe(1);
+    expect(apple?.hardCount).toBe(1);
+    const banana = weak.find((w) => w.name === 'banana');
+    expect(banana?.wrongCount).toBe(1);
+    expect(banana?.againCount).toBe(0);
+    expect(banana?.hardCount).toBe(1);
+    // 同分时 Again 更多的排前面（apple 2 次 > banana 1 次，顺序必然 apple 在前）
+    expect(weak[0].name).toBe('apple');
+  });
+
   it('词性分布：多词性词条按词性拆分计数，未识别类别归入「其他」', async () => {
     await installBookData('multi', [
       { w: 'record', uk: '', us: '', m: ['记录', '录制'], pos: 'n.；vt.', ex: [], freq: 60, books: [] },
@@ -137,23 +171,61 @@ describe('仪表盘数据服务', () => {
     expect(curve.avgStability).toBeGreaterThan(0);
   });
 
-  it('遗忘曲线：同一天内的学习/重学不产生间隔样本，跨天复习才统计', async () => {
+  it('保持率曲线：同天学习/重学不产生数据，跨天复习通过计入保持', async () => {
     const now = Date.now();
-    // 同一词两条同一天日志（学习 + 几分钟后重学）→ 不构成间隔样本（当天假数据）
+    // 同一词两条同一天日志（学习 + 几分钟后重学）→ 观察期不足 1 天，不进入曲线
     await db.reviewLogs.add({ wordId: 'apple', rating: 3, elapsedMs: 1000, reviewedAt: now - 300000, scheduledDays: 1, state: State.Review, mode: 'learn' });
     await db.reviewLogs.add({ wordId: 'apple', rating: 3, elapsedMs: 1000, reviewedAt: now, scheduledDays: 1, state: State.Review, mode: 'learn' });
     const curve1 = await getForgettingCurveData();
     expect(curve1.actual).toHaveLength(0);
 
-    // 跨天：两个词 2 天前学习 → 今天复习 → 产生「间隔 2 天」样本（≥2 样本才展示）
+    // 两个词 2 天前学习 → 今天复习通过（3/4）→ 从未失败，第 1、2 天保持率 100%
     await db.reviewLogs.add({ wordId: 'banana', rating: 3, elapsedMs: 1000, reviewedAt: now - 86400000 * 2, scheduledDays: 1, state: State.Review, mode: 'learn' });
     await db.reviewLogs.add({ wordId: 'banana', rating: 4, elapsedMs: 1000, reviewedAt: now, scheduledDays: 1, state: State.Review, mode: 'review' });
     await db.reviewLogs.add({ wordId: 'cherry', rating: 3, elapsedMs: 1000, reviewedAt: now - 86400000 * 2, scheduledDays: 1, state: State.Review, mode: 'learn' });
     await db.reviewLogs.add({ wordId: 'cherry', rating: 3, elapsedMs: 1000, reviewedAt: now, scheduledDays: 1, state: State.Review, mode: 'review' });
     const curve2 = await getForgettingCurveData();
     expect(curve2.actual.length).toBeGreaterThan(0);
-    expect(curve2.actual[0].days).toBeGreaterThanOrEqual(1);
+    expect(curve2.actual[0].days).toBe(1);
     expect(curve2.actual[0].successRate).toBe(100);
     expect(curve2.actual[0].samples).toBe(2);
+    // 第 2 天仍未失败 → 保持率继续 100%
+    const d2 = curve2.actual.find((p) => p.days === 2);
+    expect(d2?.successRate).toBe(100);
+    expect(d2?.samples).toBe(2);
+  });
+
+  it('保持率曲线：复习评 1-2 档判定为遗忘，从失败日起退出保持', async () => {
+    const now = Date.now();
+    // 两个词 2 天前学习(Good)，今天复习都点 Hard(2) → 首败发生在第 2 天
+    await db.reviewLogs.add({ wordId: 'apple', rating: 3, elapsedMs: 1000, reviewedAt: now - 86400000 * 2, scheduledDays: 1, state: State.Review, mode: 'learn' });
+    await db.reviewLogs.add({ wordId: 'apple', rating: 2, elapsedMs: 1000, reviewedAt: now, scheduledDays: 2, state: State.Review, mode: 'review' });
+    await db.reviewLogs.add({ wordId: 'banana', rating: 3, elapsedMs: 1000, reviewedAt: now - 86400000 * 2, scheduledDays: 1, state: State.Review, mode: 'learn' });
+    await db.reviewLogs.add({ wordId: 'banana', rating: 2, elapsedMs: 1000, reviewedAt: now, scheduledDays: 2, state: State.Review, mode: 'review' });
+    const curve = await getForgettingCurveData();
+    // 第 1 天：两词都还没失败 → 100%
+    const d1 = curve.actual.find((p) => p.days === 1);
+    expect(d1?.successRate).toBe(100);
+    expect(d1?.samples).toBe(2);
+    // 第 2 天：2/2 失败 → 保持率降到 0%
+    const d2 = curve.actual.find((p) => p.days === 2);
+    expect(d2).toBeDefined();
+    expect(d2?.successRate).toBe(0);
+    expect(d2?.samples).toBe(2);
+  });
+
+  it('保持率曲线：记忆单调假设——后几天记住的词，前几天也计入保持（日历日差）', async () => {
+    // 8/9 21:47 学、8/11 21:52 复习通过：日历日差 2 天（时间差 ceil 会是 3 天）
+    const t0 = Date.UTC(2026, 7, 9, 13, 47); // 东八区 21:47
+    const t1 = Date.UTC(2026, 7, 11, 13, 52); // 东八区 21:52
+    await db.reviewLogs.add({ wordId: 'apple', rating: 3, elapsedMs: 1000, reviewedAt: t0, scheduledDays: 1, state: State.Review, mode: 'learn' });
+    await db.reviewLogs.add({ wordId: 'apple', rating: 3, elapsedMs: 1000, reviewedAt: t1, scheduledDays: 2, state: State.Review, mode: 'review' });
+    await db.reviewLogs.add({ wordId: 'banana', rating: 3, elapsedMs: 1000, reviewedAt: t0, scheduledDays: 1, state: State.Review, mode: 'learn' });
+    await db.reviewLogs.add({ wordId: 'banana', rating: 3, elapsedMs: 1000, reviewedAt: t1, scheduledDays: 2, state: State.Review, mode: 'review' });
+    const curve = await getForgettingCurveData();
+    // 两词 8/9 学、8/11 复习通过 → 从未失败：观察期内每天都 100% 保持（样本 2）
+    expect(curve.actual[0].days).toBe(1);
+    expect(curve.actual.every((p) => p.successRate === 100)).toBe(true);
+    expect(curve.actual[0].samples).toBe(2);
   });
 });

@@ -2,10 +2,10 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { db, resetDatabase } from '@/db/schema';
 import { installBookData } from '@/services/wordbook';
-import { loadLearnQueue, loadReviewQueue, loadRandomQueue, recordRating, resetWordLearning, migrateLegacyFirstReviewDue } from '@/services/study';
-import { getTodayNewCount } from '@/services/stats';
+import { loadLearnQueue, loadReviewQueue, loadRandomQueue, recordRating, resetWordLearning, migrateLegacyFirstReviewDue, alignDueToDayStart } from '@/services/study';
+import { getTodayNewCount, getTodayReviewCount } from '@/services/stats';
 import { useSettings } from '@/stores/settings';
-import { dateKey, dayRangeInZone } from '@/lib/format';
+import { dateKey, dayRangeInZone, shiftDateKey } from '@/lib/format';
 import { Rating, State } from '@/types';
 
 const TEST_BOOK = {
@@ -86,6 +86,33 @@ describe('学习闭环（学习服务 + 会话落库）', () => {
     expect(stat?.newCount).toBe(1); // 回炉不重复计
     expect(stat?.totalCount).toBe(3); // 流水仍按答题次数计
     expect(await getTodayNewCount()).toBe(1); // 今日新学按词去重
+  });
+
+  it('新学计数：首答「没学会」(Again) 再答对才算学会并计入（与按日志去重口径一致）', async () => {
+    const apple = TEST_BOOK.words[0];
+    // 首次学习就答错（Again）→ 不建「学会」计数（此时卡片已创建）
+    await recordRating(apple, null, Rating.Again, 'learn', 3000);
+    let stat = await db.dailyStats.get(dateKey());
+    expect(stat?.newCount).toBe(0);
+    expect(await getTodayNewCount()).toBe(0);
+    // 再次学习答对（Good）→ 该词当天首次「学会」，计入新学
+    await recordRating(apple, (await db.userWords.get('apple')) ?? null, Rating.Good, 'learn', 2500);
+    stat = await db.dailyStats.get(dateKey());
+    expect(stat?.newCount).toBe(1);
+    expect(await getTodayNewCount()).toBe(1); // 与按日志去重（learn 且 ≥2）完全一致
+  });
+
+  it('复习词数：同一词回炉补考只算 1 个复习词', async () => {
+    const apple = TEST_BOOK.words[0];
+    await recordRating(apple, null, Rating.Good, 'learn', 3000);
+    // 复习 Hard → 回炉补考 → 补考 Good：同词当天 3 条 review 日志
+    const card = await db.userWords.get('apple');
+    await recordRating(apple, card ?? null, Rating.Hard, 'review', 2000);
+    await recordRating(apple, (await db.userWords.get('apple')) ?? null, Rating.Good, 'review', 2000);
+    const stat = await db.dailyStats.get(dateKey());
+    expect(stat?.reviewCount).toBe(1); // 按词去重
+    expect(stat?.totalCount).toBe(3); // 次数仍按答题流水计
+    expect(await getTodayReviewCount()).toBe(1);
   });
 
   it('复习队列：到期词按 due 排序，未到期不出现', async () => {
@@ -195,8 +222,10 @@ describe('学习闭环（学习服务 + 会话落库）', () => {
     expect(stat?.correctCount).toBe(0); // Again 不算正确
     const updated = await db.userWords.get('apple');
     expect(updated?.wrongCount).toBe(1); // 答错累计
-    // relearning_steps=['1d'] 属长期步骤：卡片直接排到第二天（不再 10 分钟循环）
-    expect(updated?.due).toBeGreaterThan(Date.now() + 86_000_000);
+    // relearning_steps=['1d'] 属长期步骤：卡片排到「明天 0 点」（到期时刻对齐日历日，
+    // 而非 now+24h 精确时刻——晚上答错次日 0 点即可复习，不会在一天内散布到期）
+    const tomorrowStart = dayRangeInZone(shiftDateKey(dateKey(), 1))[0];
+    expect(updated?.due).toBe(tomorrowStart);
   });
 
   it('随机抽查：只抽已毕业卡片（排除学习中），不受到期限制', async () => {
@@ -269,5 +298,22 @@ describe('学习闭环（学习服务 + 会话落库）', () => {
     expect(apple?.due).toBe(todayStart); // 提前到今天 0 点 → 今天即可复习
     const banana = await db.userWords.get('banana');
     expect(banana?.due).toBe(now + 86400000); // 不受影响
+  });
+
+  it('迁移：历史精确时刻 due 对齐到所在日 0 点，幂等', async () => {
+    // 8/9 21:37 学的词 → due = 8/11 21:37（非 0 点）→ 应对齐到 8/11 0 点
+    const dayStart = dayRangeInZone('2026-08-11')[0];
+    const evening = dayStart + 21 * 3600 * 1000 + 37 * 60 * 1000; // 21:37
+    await db.userWords.put({ ...dueCard('apple', evening), lastReviewAt: evening - 2 * 86400000 });
+    // 已是 0 点的卡不动
+    await db.userWords.put({ ...dueCard('banana', dayStart), lastReviewAt: dayStart - 86400000 });
+    const n = await alignDueToDayStart();
+    expect(n).toBe(1);
+    const apple = await db.userWords.get('apple');
+    expect(apple?.due).toBe(dayStart);
+    const banana = await db.userWords.get('banana');
+    expect(banana?.due).toBe(dayStart);
+    // 幂等：再跑一次不再迁移
+    expect(await alignDueToDayStart()).toBe(0);
   });
 });

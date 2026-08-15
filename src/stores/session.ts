@@ -2,18 +2,32 @@ import { create } from 'zustand';
 import { loadLearnQueue, loadReviewQueue, loadRandomQueue, recordRating, resetWordLearning } from '@/services/study';
 import { getTodayNewCount, getDueCount, getTodayReviewQuotaUsed } from '@/services/stats';
 import { useSettings } from '@/stores/settings';
-import type { Word, UserWord, Rating } from '@/types';
+import { Rating, type Word, type UserWord } from '@/types';
 
 /** 练习模式 */
 export type PracticeMode = 'flip' | 'quiz' | 'spell';
 /** 会话类型 */
 export type StudyMode = 'learn' | 'review' | 'random';
 
+/**
+ * 评分/回忆确认的模块级同步锁：
+ * rate 与 confirmRecall 都先 get() 读快照、await DB 写入、再 set()。
+ * await 期间若用户快速触发第二次调用，两笔会基于同一份快照计算、后者覆盖前者
+ * （同一题记两次 / 队列错位）。锁保证同一时刻只有一笔在途，后者直接丢弃。
+ */
+let ratingLock = false;
+
 interface StudyItem {
   word: Word;
   userWord: UserWord | null;
   /** 该词累计回炉/重学次数（展示用） */
   retries?: number;
+}
+
+/** 本轮完成的单词（完成页展示用；回炉词只保留最终通过评分，按词去重） */
+interface DoneWord {
+  word: Word;
+  rating: Rating;
 }
 
 /** 会话阶段：study 学习 / recall 批量回忆确认 / relearn 回忆失败重学 */
@@ -32,6 +46,8 @@ interface SessionState {
   sessionStartedAt: number;
   /** 会话内完成数 */
   doneCount: number;
+  /** 本轮完成的单词列表（完成页展示；按词去重，回炉词保留最终评分） */
+  doneWords: DoneWord[];
   /** 会话内答对数 */
   correctCount: number;
   /** 会话内总作答次数（每次评分 + 每次回忆确认；跳过/翻面不计） */
@@ -75,6 +91,7 @@ const initialState = {
   itemStartedAt: 0,
   sessionStartedAt: 0,
   doneCount: 0,
+  doneWords: [],
   correctCount: 0,
   attemptCount: 0,
   hasMore: false,
@@ -101,6 +118,7 @@ export const useSession = create<SessionState>()((set, get) => ({
         itemStartedAt: now,
         sessionStartedAt: now,
         doneCount: 0,
+        doneWords: [],
         correctCount: 0,
         attemptCount: 0,
         phase: 'study' as SessionPhase,
@@ -135,10 +153,10 @@ export const useSession = create<SessionState>()((set, get) => ({
           status: items.length > 0 ? 'running' : 'finished',
         });
       } else {
-        // 复习分组：与新学一致，一次只加载一组（默认 10），学完一组可点「继续下一组」；
+        // 复习分组：一次只加载一组（默认 10，可独立设置「每组复习数」），学完一组可点「继续下一组」；
         // hasMore = 到期词比本组多 且 每日复习配额还有富余（保证下一组真能加载出词）
         const { settings } = useSettings.getState();
-        const groupSize = Math.max(1, settings.groupSize || 10);
+        const groupSize = Math.max(1, settings.reviewGroupSize || settings.groupSize || 10);
         const items = await loadReviewQueue(groupSize);
         const doneToday = await getTodayReviewQuotaUsed();
         const remainingDaily = Math.max(0, settings.dailyReviewLimit - doneToday);
@@ -158,120 +176,129 @@ export const useSession = create<SessionState>()((set, get) => ({
   },
 
   rate: async (rating) => {
-    const s = get();
-    if (s.status !== 'running') return;
-    const elapsedMs = Date.now() - s.itemStartedAt;
+    // 并发保护：上一笔评分尚未落库时，丢弃新触发的评分（见 ratingLock 注释）
+    if (ratingLock) return;
+    ratingLock = true;
+    try {
+      const s = get();
+      if (s.status !== 'running') return;
+      const elapsedMs = Date.now() - s.itemStartedAt;
 
-    // ---- 重学阶段：回忆失败后重新学习，评 3/4 通过 → 攒入二次确认列表；重学队列全部学完 → 再次进入 recall 回忆确认 ----
-    if (s.phase === 'relearn') {
-      const item = s.relearnQueue[s.relearnIndex];
-      if (!item) {
-        set({ status: 'finished' });
+      // ---- 重学阶段：回忆失败后重新学习，评 3/4 通过 → 攒入二次确认列表；重学队列全部学完 → 再次进入 recall 回忆确认 ----
+      if (s.phase === 'relearn') {
+        const item = s.relearnQueue[s.relearnIndex];
+        if (!item) {
+          set({ status: 'finished' });
+          return;
+        }
+        try {
+          const result = await recordRating(item.word, item.userWord, rating, 'learn', elapsedMs);
+          const isCorrect = rating >= 3;
+          if (rating < 3) {
+            set({
+              relearnQueue: [...s.relearnQueue, { word: item.word, userWord: result.updated, retries: (item.retries ?? 0) + 1 }],
+              relearnIndex: s.relearnIndex + 1,
+              itemStartedAt: Date.now(),
+              correctCount: s.correctCount + (isCorrect ? 1 : 0),
+              attemptCount: s.attemptCount + 1,
+            });
+            return;
+          }
+          // 掌握：不直接完成，攒入二次确认列表，重学队列学完后统一再回忆确认一次
+          const nextIndex = s.relearnIndex + 1;
+          const reconfirmList = [...s.reconfirmList, { word: item.word, userWord: result.updated, retries: item.retries ?? 0 }];
+          const relearnDone = nextIndex >= s.relearnQueue.length;
+          if (relearnDone) {
+            set({
+              relearnIndex: nextIndex,
+              relearnQueue: [], // 重学队列已消费完，清空避免误判还有重学词
+              reconfirmList: [],
+              recallList: reconfirmList,
+              recallIndex: 0,
+              recallRevealed: false,
+              phase: 'recall',
+              itemStartedAt: Date.now(),
+              correctCount: s.correctCount + 1,
+              attemptCount: s.attemptCount + 1,
+              status: 'running',
+            });
+          } else {
+            set({
+              relearnIndex: nextIndex,
+              reconfirmList,
+              itemStartedAt: Date.now(),
+              correctCount: s.correctCount + 1,
+              attemptCount: s.attemptCount + 1,
+              status: 'running',
+            });
+          }
+        } catch (e) {
+          set({ error: e instanceof Error ? e.message : '评分保存失败，请重试' });
+        }
         return;
       }
+
+      if (s.phase !== 'study' || s.index >= s.queue.length) return;
+      const item = s.queue[s.index];
       try {
-        const result = await recordRating(item.word, item.userWord, rating, 'learn', elapsedMs);
+        const result = await recordRating(item.word, item.userWord, rating, s.mode, elapsedMs);
         const isCorrect = rating >= 3;
-        if (rating < 3) {
+        const nextIndex = s.index + 1;
+        // 回炉判定：
+        // - 学习模式：1（没学会）/ 2（有印象）未掌握 → 回炉再学一遍
+        // - 复习模式：1（忘记）/ 2（模糊）没记住 → 回炉当场再考（FSRS 已把下次到期排到第二天以后）
+        // - 其余评分即完成（FSRS 自行决定下次间隔）
+        const recycle = (s.mode === 'learn' || s.mode === 'review') && rating < 3;
+        if (recycle) {
           set({
-            relearnQueue: [...s.relearnQueue, { word: item.word, userWord: result.updated, retries: (item.retries ?? 0) + 1 }],
-            relearnIndex: s.relearnIndex + 1,
+            queue: [...s.queue, { word: item.word, userWord: result.updated, retries: (item.retries ?? 0) + 1 }],
+            index: nextIndex,
             itemStartedAt: Date.now(),
             correctCount: s.correctCount + (isCorrect ? 1 : 0),
             attemptCount: s.attemptCount + 1,
+            status: 'running', // 队尾已补一个词，本轮不会提前结束
           });
           return;
         }
-        // 掌握：不直接完成，攒入二次确认列表，重学队列学完后统一再回忆确认一次
-        const nextIndex = s.relearnIndex + 1;
-        const reconfirmList = [...s.reconfirmList, { word: item.word, userWord: result.updated, retries: item.retries ?? 0 }];
-        const relearnDone = nextIndex >= s.relearnQueue.length;
-        if (relearnDone) {
+        // 掌握（不回炉）：
+        // 学习模式：攒进批量回忆确认列表，本轮全部学完后统一弹中文回忆；
+        // 复习/抽查模式无回忆环节，直接推进（记入本轮完成单词列表）。
+        if (s.mode === 'learn') {
+          const wl = item.word.w.toLowerCase();
+          const exists = s.recallList.some((r) => r.word.w.toLowerCase() === wl);
+          const recallList = exists
+            ? s.recallList.map((r) => (r.word.w.toLowerCase() === wl ? { ...r, retries: Math.max(r.retries ?? 0, item.retries ?? 0) } : r))
+            : [...s.recallList, { word: item.word, userWord: result.updated, retries: item.retries ?? 0 }];
+          const queueDone = nextIndex >= s.queue.length;
           set({
-            relearnIndex: nextIndex,
-            relearnQueue: [], // 重学队列已消费完，清空避免误判还有重学词
-            reconfirmList: [],
-            recallList: reconfirmList,
+            index: nextIndex,
+            itemStartedAt: Date.now(),
+            doneCount: s.doneCount + 1,
+            correctCount: s.correctCount + (isCorrect ? 1 : 0),
+            attemptCount: s.attemptCount + 1,
+            recallList,
+            phase: queueDone ? 'recall' : 'study',
             recallIndex: 0,
             recallRevealed: false,
-            phase: 'recall',
-            itemStartedAt: Date.now(),
-            correctCount: s.correctCount + 1,
-            attemptCount: s.attemptCount + 1,
-            status: 'running',
           });
-        } else {
-          set({
-            relearnIndex: nextIndex,
-            reconfirmList,
-            itemStartedAt: Date.now(),
-            correctCount: s.correctCount + 1,
-            attemptCount: s.attemptCount + 1,
-            status: 'running',
-          });
+          return;
         }
-      } catch (e) {
-        set({ error: e instanceof Error ? e.message : '评分保存失败，请重试' });
-      }
-      return;
-    }
-
-    if (s.phase !== 'study' || s.index >= s.queue.length) return;
-    const item = s.queue[s.index];
-    try {
-      const result = await recordRating(item.word, item.userWord, rating, s.mode, elapsedMs);
-      const isCorrect = rating >= 3;
-      const nextIndex = s.index + 1;
-      // 回炉判定：
-      // - 学习模式：1（没学会）/ 2（有印象）未掌握 → 回炉再学一遍
-      // - 复习模式：1（忘记）/ 2（模糊）没记住 → 回炉当场再考（FSRS 已把下次到期排到第二天以后）
-      // - 其余评分即完成（FSRS 自行决定下次间隔）
-      const recycle = (s.mode === 'learn' || s.mode === 'review') && rating < 3;
-      if (recycle) {
-        set({
-          queue: [...s.queue, { word: item.word, userWord: result.updated, retries: (item.retries ?? 0) + 1 }],
-          index: nextIndex,
-          itemStartedAt: Date.now(),
-          correctCount: s.correctCount + (isCorrect ? 1 : 0),
-          attemptCount: s.attemptCount + 1,
-          status: 'running', // 队尾已补一个词，本轮不会提前结束
-        });
-        return;
-      }
-      // 掌握（不回炉）：
-      // 学习模式：攒进批量回忆确认列表，本轮全部学完后统一弹中文回忆；
-      // 复习/抽查模式无回忆环节，直接推进。
-      if (s.mode === 'learn') {
-        const wl = item.word.w.toLowerCase();
-        const exists = s.recallList.some((r) => r.word.w.toLowerCase() === wl);
-        const recallList = exists
-          ? s.recallList.map((r) => (r.word.w.toLowerCase() === wl ? { ...r, retries: Math.max(r.retries ?? 0, item.retries ?? 0) } : r))
-          : [...s.recallList, { word: item.word, userWord: result.updated, retries: item.retries ?? 0 }];
-        const queueDone = nextIndex >= s.queue.length;
         set({
           index: nextIndex,
           itemStartedAt: Date.now(),
           doneCount: s.doneCount + 1,
           correctCount: s.correctCount + (isCorrect ? 1 : 0),
           attemptCount: s.attemptCount + 1,
-          recallList,
-          phase: queueDone ? 'recall' : 'study',
-          recallIndex: 0,
-          recallRevealed: false,
+          doneWords: [...s.doneWords, { word: item.word, rating }],
+          status: nextIndex >= s.queue.length ? 'finished' : 'running',
         });
-        return;
+      } catch (e) {
+        // 落库失败时不推进队列，提示用户重试，避免进度丢失
+        set({ error: e instanceof Error ? e.message : '评分保存失败，请重试' });
       }
-      set({
-        index: nextIndex,
-        itemStartedAt: Date.now(),
-        doneCount: s.doneCount + 1,
-        correctCount: s.correctCount + (isCorrect ? 1 : 0),
-        attemptCount: s.attemptCount + 1,
-        status: nextIndex >= s.queue.length ? 'finished' : 'running',
-      });
-    } catch (e) {
-      // 落库失败时不推进队列，提示用户重试，避免进度丢失
-      set({ error: e instanceof Error ? e.message : '评分保存失败，请重试' });
+    } finally {
+      // 无论成功/失败/提前 return 都释放锁，避免死锁
+      ratingLock = false;
     }
   },
 
@@ -283,43 +310,55 @@ export const useSession = create<SessionState>()((set, get) => ({
   },
 
   confirmRecall: async (remembered) => {
-    const s = get();
-    if (s.status !== 'running' || s.phase !== 'recall') return;
-    const item = s.recallList[s.recallIndex];
-    if (!item) return;
-    const nextIndex = s.recallIndex + 1;
-    const recallDone = nextIndex >= s.recallList.length;
-    if (!remembered) {
-      // 记错了：清空该词学习数据（删卡），进入重学队列重新来过（不影响其他词）
-      try {
-        await resetWordLearning(item.word.w);
-        const relearnQueue = [...s.relearnQueue, { word: item.word, userWord: null, retries: (item.retries ?? 0) + 1 }];
-        set({
-          recallIndex: nextIndex,
-          recallRevealed: false,
-          relearnQueue,
-          phase: recallDone ? 'relearn' : 'recall',
-          relearnIndex: 0,
-          itemStartedAt: Date.now(),
-          attemptCount: s.attemptCount + 1,
-        });
-      } catch (e) {
-        set({ error: e instanceof Error ? e.message : '重置失败，请重试' });
+    // 并发保护：与 rate 共用同一把锁，避免回忆确认与评分交错（见 ratingLock 注释）
+    if (ratingLock) return;
+    ratingLock = true;
+    try {
+      const s = get();
+      if (s.status !== 'running' || s.phase !== 'recall') return;
+      const item = s.recallList[s.recallIndex];
+      if (!item) return;
+      const nextIndex = s.recallIndex + 1;
+      const recallDone = nextIndex >= s.recallList.length;
+      if (!remembered) {
+        // 记错了：清空该词学习数据（删卡），进入重学队列重新来过（不影响其他词）
+        try {
+          await resetWordLearning(item.word.w);
+          const relearnQueue = [...s.relearnQueue, { word: item.word, userWord: null, retries: (item.retries ?? 0) + 1 }];
+          set({
+            recallIndex: nextIndex,
+            recallRevealed: false,
+            relearnQueue,
+            phase: recallDone ? 'relearn' : 'recall',
+            relearnIndex: 0,
+            itemStartedAt: Date.now(),
+            attemptCount: s.attemptCount + 1,
+          });
+        } catch (e) {
+          set({ error: e instanceof Error ? e.message : '重置失败，请重试' });
+        }
+        return;
       }
-      return;
+      // 确实记住了：确认掌握，进入下一项（全部确认完 → 有重学词则重学，否则完成）
+      const hasRelearn = s.relearnQueue.length > 0;
+      const wl = item.word.w.toLowerCase();
+      // 记入本轮完成单词（去重：重学后再确认的词覆盖旧的未完成记录）
+      const doneWords = [...s.doneWords.filter((d) => d.word.w.toLowerCase() !== wl), { word: item.word, rating: Rating.Good }];
+      set({
+        recallIndex: nextIndex,
+        recallRevealed: false,
+        phase: recallDone ? (hasRelearn ? 'relearn' : 'recall') : 'recall',
+        relearnIndex: 0,
+        itemStartedAt: Date.now(),
+        correctCount: s.correctCount + 1,
+        attemptCount: s.attemptCount + 1,
+        doneWords,
+        status: recallDone && !hasRelearn ? 'finished' : 'running',
+      });
+    } finally {
+      // 无论成功/失败/提前 return 都释放锁，避免死锁
+      ratingLock = false;
     }
-    // 确实记住了：确认掌握，进入下一项（全部确认完 → 有重学词则重学，否则完成）
-    const hasRelearn = s.relearnQueue.length > 0;
-    set({
-      recallIndex: nextIndex,
-      recallRevealed: false,
-      phase: recallDone ? (hasRelearn ? 'relearn' : 'recall') : 'recall',
-      relearnIndex: 0,
-      itemStartedAt: Date.now(),
-      correctCount: s.correctCount + 1,
-      attemptCount: s.attemptCount + 1,
-      status: recallDone && !hasRelearn ? 'finished' : 'running',
-    });
   },
 
   skip: () => {

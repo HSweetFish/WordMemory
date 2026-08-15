@@ -120,6 +120,8 @@ export interface Settings {
   aiModel: string;
   /** 每组新词数量（学习页一次只加载一组，学完可继续下一组） */
   groupSize: number;
+  /** 每组复习数量（复习页一次只加载一组；独立于新学每组，默认 10） */
+  reviewGroupSize: number;
   /** 深色模式 */
   darkMode: boolean;
   /** 自动发音 */

@@ -11,6 +11,7 @@ import WordCard from '@/components/study/WordCard';
 import Quiz from '@/components/study/Quiz';
 import Spell from '@/components/study/Spell';
 import RatingBar from '@/components/study/RatingBar';
+import { ratingLabel } from '@/lib/history';
 
 const PRACTICE_TABS: { value: PracticeMode; label: string; icon: string }[] = [
   { value: 'flip', label: '翻转', icon: '🃏' },
@@ -73,7 +74,8 @@ export default function StudySession({ mode }: StudySessionProps) {
             : '未掌握，已排到本组末尾，稍后会再出现一次',
       );
       window.clearTimeout(noticeTimer.current);
-      noticeTimer.current = window.setTimeout(() => setRecycleNotice(null), 2500);
+      // 短提示即可（1.2s）：评完分下一张卡马上出现，提示太长会滞留到下一张卡
+      noticeTimer.current = window.setTimeout(() => setRecycleNotice(null), 1200);
     }
     void session.rate(r);
   };
@@ -128,15 +130,32 @@ export default function StudySession({ mode }: StudySessionProps) {
     const elapsed = (Date.now() - session.sessionStartedAt) / 1000;
     const rate = session.attemptCount > 0 ? Math.round((session.correctCount / session.attemptCount) * 100) : 0;
     return (
-      <div className={`${ui.card} p-8 text-center`}>
-        <div className="text-5xl">🎉</div>
-        <h2 className="mt-3 text-xl font-bold text-slate-800 dark:text-slate-100">本轮完成</h2>
+      <div className={`${ui.card} p-8`}>
+        {/* 顶部：标题 + 操作按钮（返回首页 / 继续下一组），无需滑到底部 */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="text-4xl">🎉</div>
+            <h2 className="text-xl font-bold text-slate-800 dark:text-slate-100">本轮完成</h2>
+          </div>
+          <div className="flex flex-wrap justify-center gap-2">
+            <button
+              onClick={() => void session.start(mode)}
+              className={ui.btnPrimary}
+            >
+              {session.doneCount === 0 ? '再试一次' : session.hasMore ? '继续下一组 ➜' : '再来一轮'}
+            </button>
+            <Link to="/" className={ui.btnSecondary}>
+              返回首页
+            </Link>
+          </div>
+        </div>
+
         {session.doneCount === 0 ? (
-          <p className="mt-2 text-slate-500 dark:text-slate-400">
-            {mode === 'learn' ? '今日新词已学完或未到学习时间' : mode === 'random' ? '还没有已学单词，先去「学习」页学几个吧' : '暂无到期需要复习的单词'}
+          <p className="mt-4 text-center text-slate-500 dark:text-slate-400">
+            {mode === 'learn' ? '今日新词已学完（或今日配额已用完），明天再来吧' : mode === 'random' ? '还没有已学单词，先去「学习」页学几个吧' : '暂无到期需要复习的单词'}
           </p>
         ) : (
-          <div className="mt-4 grid grid-cols-3 gap-3">
+          <div className="mt-5 grid grid-cols-3 gap-3 text-center">
             <div className="bg-brand-soft-gradient rounded-xl p-3">
               <div className="text-2xl font-bold text-brand-600">{session.doneCount}</div>
               <div className="text-xs text-slate-400">完成</div>
@@ -151,17 +170,44 @@ export default function StudySession({ mode }: StudySessionProps) {
             </div>
           </div>
         )}
-        <div className="mt-6 flex justify-center gap-3">
-          <button
-            onClick={() => void session.start(mode)}
-            className={ui.btnPrimaryLg}
-          >
-            {session.doneCount === 0 ? '再试一次' : session.hasMore ? '继续下一组 ➜' : '再来一轮'}
-          </button>
-          <Link to="/" className={ui.btnSecondaryLg}>
-            返回首页
-          </Link>
-        </div>
+
+        {/* 本轮完成的单词列表（按词去重；复习/抽查/新学完成页通用） */}
+        {session.doneWords.length > 0 && (
+          <div className="mt-5 text-left">
+            <div className="mb-2 text-sm font-semibold text-slate-500 dark:text-slate-400">
+              {mode === 'review' ? '本次复习单词' : mode === 'random' ? '本轮抽查单词' : '本轮新学单词'}（{session.doneWords.length}）
+            </div>
+            <div className="max-h-64 space-y-1.5 overflow-y-auto rounded-xl border border-slate-100 bg-slate-50/70 p-2.5 dark:border-slate-800 dark:bg-slate-900/60">
+              {session.doneWords.map((d, i) => {
+                const lines = meaningLines(d.word);
+                // 完成页评分标签与评分按钮 / 记忆历史保持一致（新学 vs 复习/抽查）
+                const label = ratingLabel(mode, d.rating);
+                const ratingColor =
+                  d.rating === 1
+                    ? 'bg-rose-100 text-rose-600 dark:bg-rose-900/40 dark:text-rose-400'
+                    : d.rating === 2
+                      ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/40 dark:text-amber-400'
+                      : d.rating === 4
+                        ? 'bg-sky-100 text-sky-600 dark:bg-sky-900/40 dark:text-sky-400'
+                        : 'bg-emerald-100 text-emerald-600 dark:bg-emerald-900/40 dark:text-emerald-400';
+                return (
+                  <div
+                    key={i}
+                    className="flex items-start justify-between gap-3 rounded-lg bg-white px-3 py-2 shadow-sm dark:bg-slate-800"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate font-semibold text-slate-800 dark:text-slate-100">{d.word.w}</div>
+                      <div className="truncate text-xs text-slate-400 dark:text-slate-500">
+                        {lines.map((g) => `${g.pos} ${g.meaning}`).join('；')}
+                      </div>
+                    </div>
+                    <span className={`shrink-0 rounded-md px-1.5 py-0.5 text-xs font-medium ${ratingColor}`}>{label}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -257,7 +303,7 @@ export default function StudySession({ mode }: StudySessionProps) {
 
         <div className="text-center text-xs text-slate-400">
           {revealed
-            ? '确实记住了 → 进入下一步 · 记错了 → 清空数据重新学一遍，通过后还会再确认一次（回车 = 确实记住了）'
+            ? '确实记住了 → 进入下一步 · 记错了 → 重新学一遍，通过后还会再确认一次（回车 = 确实记住了）'
             : '先回忆，再点「确认」显示英文对照（回车/空格 = 确认）'}
         </div>
       </div>
@@ -333,16 +379,17 @@ export default function StudySession({ mode }: StudySessionProps) {
 
         {/* 评分栏：翻转模式翻面后 / 答题模式答完后 */}
         {(session.practice === 'flip' ? revealed : answered) && (
-          <>
-            {recycleNotice && (
-              <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-center text-sm font-medium text-amber-600">
-                ↩️ {recycleNotice}
-              </div>
-            )}
-            <RatingBar onRate={handleRate} correct={session.practice === 'flip' ? null : correct} mode={mode === 'learn' ? 'learn' : 'review'} />
-          </>
+          <RatingBar onRate={handleRate} correct={session.practice === 'flip' ? null : correct} mode={mode === 'learn' ? 'learn' : 'review'} />
         )}
       </div>
+
+      {/* 回炉提示：评分 1-2 后立即显示。放在题目区外、不依赖翻面/答题状态——
+          否则切到下一张卡时新卡 revealed=false 会把提示藏起来，要等翻面下一张才出现（延迟反馈） */}
+      {recycleNotice && (
+        <div className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-center text-sm font-medium text-amber-600">
+          ↩️ {recycleNotice}
+        </div>
+      )}
 
       <div className="text-center text-xs text-slate-400">
         空格：翻面 · 数字键 1-4：评分

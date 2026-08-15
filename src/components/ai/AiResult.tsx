@@ -57,11 +57,11 @@ export default function AiResult({ generate, buttonLabel, loadingLabel, display 
   if (!hasAiKey()) {
     return (
       <div className="mt-2 rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
-        🤖 AI 功能未启用 —— 请先在
+        🤖 AI 功能未启用，请先在
         <Link to="/settings" className="mx-1 font-medium text-brand-600 hover:underline dark:text-brand-400">
           设置
         </Link>
-        中填入 API Key
+        页填入 API Key
       </div>
     );
   }

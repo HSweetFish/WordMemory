@@ -2,16 +2,57 @@
  * 极简 Markdown 渲染（安全子集）
  * 支持：标题、加粗、斜体、删除线、行内代码、代码块、无序/有序列表、任务清单、
  * 表格、分隔线、引用、换行。
- * 先转义 HTML 再应用转换，避免 XSS。
+ * 先把 AI 偶尔返回的轻量 HTML 标签归一化为 Markdown 语法（避免 `<b>…</b>` 这类
+ * 富文本源码直接外露给用户），再转义剩余 HTML、应用转换，避免 XSS。
  */
 
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+/**
+ * 把轻量 HTML 标签转成 Markdown 等价语法：
+ * <b>/<strong> → **，<i>/<em> → *，<br> → 换行，<li> → 列表项，<h1..6> → # 标题，
+ * <blockquote> → 引用，<code> → 行内代码；未知标签（<script>/<img>/<span>…）剥离标签、保留文字。
+ * 标签名后用 lookahead（空白/斜杠/右尖括号）限定，避免 <s> 误伤 <script> 这类前缀相同的标签。
+ */
+const HTML_TO_MD: Record<string, string> = {
+  b: '**',
+  strong: '**',
+  del: '~~',
+  s: '~~',
+  strike: '~~',
+  em: '*',
+  i: '*',
+  code: '`',
+  tt: '`',
+};
+
+function softenHtml(text: string): string {
+  return text
+    // 块级换行类（闭标签名后紧跟 >，用 \s*> 匹配）
+    .replace(/<br(?=[\s/>])[^>]*>/gi, '\n')
+    .replace(/<\/p\s*>/gi, '\n')
+    .replace(/<p(?=[\s/>])[^>]*>/gi, '')
+    .replace(/<h([1-6])(?=[\s/>])[^>]*>/gi, (_m, n: string) => `\n${'#'.repeat(Number(n))} `)
+    .replace(/<\/(h[1-6])\s*>/gi, '\n')
+    // 列表类
+    .replace(/<\/li\s*>/gi, '\n')
+    .replace(/<li(?=[\s/>])[^>]*>/gi, '- ')
+    .replace(/<\/[uo]l\s*>/gi, '\n')
+    .replace(/<[uo]l(?=[\s/>])[^>]*>/gi, '\n')
+    // 行内样式类
+    .replace(/<\/(strong|b|del|s|strike|em|i|code|tt)\s*>/gi, (_m, tag: string) => HTML_TO_MD[tag.toLowerCase()] ?? '')
+    .replace(/<(strong|b|del|s|strike|em|i|code|tt)(?=[\s/>])[^>]*>/gi, (_m, tag: string) => HTML_TO_MD[tag.toLowerCase()] ?? '')
+    // 引用类
+    .replace(/<blockquote(?=[\s/>])[^>]*>/gi, '> ')
+    .replace(/<\/blockquote\s*>/gi, '\n')
+    // 其余未知标签：剥离标签、保留文字
+    .replace(/<[^>]+>/g, '');
 }
 
 function inline(text: string): string {
@@ -49,7 +90,7 @@ function isSeparatorRow(cells: string[]): boolean {
 
 /** 将 Markdown 文本渲染为安全的 HTML 字符串 */
 export function mdToHtml(md: string): string {
-  const lines = escapeHtml(md).split('\n');
+  const lines = escapeHtml(softenHtml(md)).split('\n');
   const out: string[] = [];
   let inCode = false;
   let listType: 'ul' | 'ol' | null = null;
@@ -112,7 +153,9 @@ export function mdToHtml(md: string): string {
       table.push(cells);
       continue;
     }
-    flush();
+    // 列表行不提前 flush：连续列表项（- 一 / - 二）合并为同一个 <ul>/<ol>；
+    // 标题/段落/引用/空行等其余行先关闭已打开的列表
+    if (!/^[-*]\s/.test(line) && !/^\d+[、)]\s?/.test(line) && !/^\d+\.\s/.test(line)) flush();
 
     // 去除最多 4 个前导空格：AI 常用的缩进嵌套子项会被拍平为同级列表项，
     // 避免显示成带“- ”的裸文本段落

@@ -171,7 +171,7 @@ export function buildMnemonicPrompt(word: Word): ChatMessage[] {
   ];
 }
 
-export function buildWeakWordsPrompt(words: { word: Word; wrongCount: number }[]): ChatMessage[] {
+export function buildWeakWordsPrompt(words: { word: Word; wrongCount: number; againCount: number; hardCount: number }[]): ChatMessage[] {
   return [
     {
       role: 'system',
@@ -180,8 +180,15 @@ export function buildWeakWordsPrompt(words: { word: Word; wrongCount: number }[]
     },
     {
       role: 'user',
-      content: `以下是我最近答错次数最多的单词（含释义与答错次数），请帮我分析共性问题并给出复习建议：
-${words.map((w) => `- ${w.word.w}（${w.word.m.join('；')}）答错 ${w.wrongCount} 次`).join('\n')}`,
+      content: `以下是我最近答错次数最多的单词（含释义与薄弱次数：答错 = 没记住 + 模糊，其中「没记住」是完全想不起来、「模糊」是勉强/不确定），请帮我分析共性问题并给出复习建议：
+${words
+  .map((w) => {
+    const detail = [`答错 ${w.wrongCount} 次`];
+    if (w.againCount > 0) detail.push(`其中没记住 ${w.againCount} 次`);
+    if (w.hardCount > 0) detail.push(`模糊 ${w.hardCount} 次`);
+    return `- ${w.word.w}（${w.word.m.join('；')}）${detail.join('，')}`;
+  })
+  .join('\n')}`,
     },
   ];
 }
@@ -267,7 +274,12 @@ export async function analyzeWeakWords(): Promise<string> {
   const words = (await Promise.all(weak.map((w) => getWord(w.wordId)))).filter((w): w is Word => !!w);
   if (words.length === 0) throw new Error('暂无可分析的薄弱词');
   const items = weak
-    .map((w) => ({ word: words.find((x) => x.w === w.wordId)!, wrongCount: w.wrongCount }))
+    .map((w) => ({
+      word: words.find((x) => x.w === w.wordId)!,
+      wrongCount: w.wrongCount,
+      againCount: w.againCount,
+      hardCount: w.hardCount,
+    }))
     .filter((it) => !!it.word);
   return chat(buildWeakWordsPrompt(items), { maxTokens: 1200 });
 }

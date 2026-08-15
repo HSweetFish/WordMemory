@@ -111,13 +111,15 @@ class FSRSImpl implements IScheduler {
     // 避免没学过的词直接获得过高的初始稳定性（后续间隔暴涨）
     const effective = userWord.state === State.New && rating === Rating.Easy ? Rating.Good : rating;
     const item = f.repeat(toCard(userWord), now)[effective as Grade];
-    // 新词首次评分：强制第一次复习排到「明天 0 点」（东八区日历日），而不是 24 小时后。
-    // 昨晚学的词今天 0 点后即可复习，符合「隔天复习」直觉；白天学的词第二天一早就能复习。
-    if (userWord.state === State.New) {
-      const tomorrowStart = dayRangeInZone(shiftDateKey(dateKey(now), 1))[0];
-      item.card.due = new Date(tomorrowStart);
-      item.card.scheduled_days = 1;
-    }
+    // 所有排程统一对齐到东八区日历日 0 点：
+    // - 新词首次复习：明天 0 点（隔天复习直觉，白天晚上学都一样）
+    // - 复习/重学：scheduledDays 天后的 0 点，而非「now + N 天」的精确时刻——
+    //   避免到期时间散布在一天内（如 8/9 21:37 学的词 8/11 21:37 才到期，
+    //   上午复习完、晚上又陆续冒出来），保证「当天到期」的词当天 0 点后即可见
+    const days = Math.max(1, Math.round(userWord.state === State.New ? 1 : item.card.scheduled_days));
+    const dueStart = dayRangeInZone(shiftDateKey(dateKey(now), days))[0];
+    item.card.due = new Date(dueStart);
+    item.card.scheduled_days = days;
     const updated: UserWord = {
       ...applyCard(userWord, item.card),
       lastRating: rating,
@@ -126,7 +128,7 @@ class FSRSImpl implements IScheduler {
     };
     return {
       updated,
-      scheduledDays: item.card.scheduled_days,
+      scheduledDays: days,
       state: item.card.state,
       stability: item.card.stability,
     };
@@ -197,6 +199,10 @@ class SM2Impl implements IScheduler {
       lastRating: rating as UserWord['lastRating'],
       wrongCount: userWord.wrongCount + (rating === Rating.Again ? 1 : 0),
     };
+    // 与 FSRS 一致：到期时刻对齐到东八区日历日 0 点，避免到期散布在一天内
+    if (interval > 0) {
+      updated.due = dayRangeInZone(shiftDateKey(dateKey(now), interval))[0];
+    }
     return {
       updated,
       scheduledDays: interval,

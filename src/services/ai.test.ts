@@ -82,17 +82,19 @@ describe('AI 模块', () => {
     expect(html).toContain('<code>code</code>');
   });
 
-  it('Markdown 渲染：XSS 转义', () => {
+  it('Markdown 渲染：剥离 HTML 标签防 XSS', () => {
     const html = mdToHtml('<script>alert(1)</script>');
-    expect(html).not.toContain('<script>');
-    expect(html).toContain('&lt;script&gt;');
+    expect(html).not.toContain('script');
+    expect(html).toContain('alert(1)');
   });
 
   it('薄弱词提示词包含诊断要求', () => {
     const word: Word = { w: 'affect', m: ['影响'], pos: 'v.', freq: 100, books: [] };
-    const messages = buildWeakWordsPrompt([{ word, wrongCount: 5 }]);
+    const messages = buildWeakWordsPrompt([{ word, wrongCount: 5, againCount: 3, hardCount: 2 }]);
     expect(messages[1].content).toContain('affect');
     expect(messages[1].content).toContain('5');
+    expect(messages[1].content).toContain('没记住 3 次');
+    expect(messages[1].content).toContain('模糊 2 次');
     expect(messages[0].content).toContain('诊断');
   });
 });

@@ -38,7 +38,7 @@ export default function Layout() {
     <div className="min-h-screen">
       {reminderVisible && (
         <div className="bg-brand-gradient-deep fixed inset-x-0 top-0 z-50 px-4 py-3 text-center text-sm font-medium text-white shadow-lg">
-          📚 该背单词啦！打开学习页，完成今天的新词与复习～
+          📚 该背单词啦！打开学习页，完成今天的新词与复习
         </div>
       )}
       <header className="sticky top-0 z-20 border-b border-slate-200/70 bg-white/80 backdrop-blur dark:border-slate-800 dark:bg-slate-900/80">

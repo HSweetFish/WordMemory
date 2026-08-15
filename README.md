@@ -2,7 +2,7 @@
 
 > 🌐 **在线体验**：https://hsweetfish.github.io/WordMemory/ （无需安装，浏览器打开即用，首次访问后支持离线）
 >
-> 🏷 **最新版本**：[v0.2.0](https://github.com/HSweetFish/WordMemory/releases) · 版本迭代规范见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+> 🏷 **最新版本**：[v0.3.0](https://github.com/HSweetFish/WordMemory/releases) · 版本迭代规范见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 本地优先（local-first）的背单词 Web 应用（PWA）：
 
@@ -19,9 +19,10 @@
 |---|---|
 | 首页 | 今日新学 / 待复习双入口卡片、连续打卡、概览 |
 | 学习 | 翻转卡片（音标/释义/例句/Web TTS 发音）、四选一测试、拼写模式、学完两步式中文回忆确认、键盘快捷键 |
-| 复习 | FSRS 到期词复习队列，按组加载，答错当场回炉再考 |
+| 复习 | FSRS 到期词复习队列，按组加载，答错当场回炉再考；随机抽查 |
 | 统计 | ECharts 仪表盘：热力图（全部/新学/复习切换）/ 趋势 / 掌握度 / 遗忘曲线 / 词库进度 / 薄弱分析（含 AI 周报），支持重建统计数据 |
 | 词库 | 6 大内置词库安装/卸载 + JSON/CSV 自定义导入 |
+| 词表 | 词书浏览、已学词回顾、全局搜索、记忆历史时间线 |
 | 设置 | 每日配额、提醒通知、深色模式、AI 配置、数据导出/恢复备份、重建统计 |
 
 内置词库：**CET4（四级）、CET6（六级）、考研、雅思、托福、COCA 2 万词频**，共 34,150 词条（100% 带词性、97% 带词频、35% 带例句）。
@@ -34,7 +35,7 @@
 - **存储**：Dexie.js（IndexedDB）：`words` / `user_words` / `review_logs` / `daily_stats`
 - **排程**：ts-fsrs v5（FSRS 算法）
 - **图表**：Apache ECharts 6（按需引入 + 路由级代码分割）
-- **测试**：Vitest + fake-indexeddb（125 个单测/集成测试）
+- **测试**：Vitest + fake-indexeddb（142 个单测/集成测试）
 
 ## 环境要求
 
@@ -47,7 +48,7 @@
 ```bash
 npm install        # 安装依赖
 npm run dev        # 开发服务器 http://localhost:5173
-npm test           # 运行全部测试（125 个）
+npm test           # 运行全部测试（142 个）
 npm run build      # 类型检查 + 生产构建 → dist/
 npm run preview    # 本地预览生产构建
 ```
@@ -85,10 +86,11 @@ npm run build   # 产出 dist/
 ```
 
 在 Vercel 导入项目：Framework Preset 选 **Vite**，Build Command `npm run build`，Output `dist`。
+基元律动（TokenRhythm）同源代理自动生效：`api/tr/[...path].ts` 由 Vercel Edge Function 运行，前端 `/tr/v1/*` 请求转发至 `https://tokenrhythm.studio/v1/*`（转发前剥离 CSRF 标识头，Authorization 原样透传）。
 
 ### Netlify
 
-拖拽 `dist/` 到 Netlify Drop，或配置 Build Command `npm run build`、Publish Directory `dist`（仓库已含 `netlify.toml`）。
+拖拽 `dist/` 到 Netlify Drop，或配置 Build Command `npm run build`、Publish Directory `dist`（仓库已含 `netlify.toml`，含 Edge Function 绑定：`/tr/*` → `netlify/edge-functions/api-tr.ts`）。
 
 ### GitHub Pages
 

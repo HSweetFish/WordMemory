@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getDueCount, getTodayNewCount, computeStreak } from '@/services/stats';
-import { countNewWords } from '@/services/wordbook';
+import { countNewWords, getInstalledBooks } from '@/services/wordbook';
 import { useSettings } from '@/stores/settings';
 import { ui } from '@/lib/ui';
 
@@ -17,6 +17,8 @@ export default function HomePage() {
   const { settings } = useSettings();
   const [stats, setStats] = useState<HomeStats | null>(null);
   const [remainingNew, setRemainingNew] = useState<number | null>(null);
+  // 正在学的第一本词书名（显示在「今日新学」卡片上）
+  const [firstBookName, setFirstBookName] = useState<string | null>(null);
 
   // 词库剩余未学词数（与每日配额取较小值显示）
   useEffect(() => {
@@ -28,6 +30,23 @@ export default function HomePage() {
     (async () => {
       const n = await countNewWords(settings.activeBooks);
       if (!cancelled) setRemainingNew(n);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.activeBooks.join(',')]);
+
+  // 取正在学的第一本词书名（settings.activeBooks[0] 对应已安装词库）
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (settings.activeBooks.length === 0) {
+        setFirstBookName(null);
+        return;
+      }
+      const books = await getInstalledBooks();
+      const first = books.find((b) => b.id === settings.activeBooks[0]);
+      if (!cancelled) setFirstBookName(first?.name ?? null);
     })();
     return () => {
       cancelled = true;
@@ -78,32 +97,43 @@ export default function HomePage() {
           )}
         </div>
 
-        <div className="relative mt-4 grid grid-cols-3 gap-3">
+        <div className="relative mt-4 grid grid-cols-3 gap-3 lg:grid-cols-12">
           <Link
             to="/learn"
-            className="card-hover rounded-xl bg-white/15 p-4 backdrop-blur hover:bg-white/25"
+            className="card-hover col-span-1 rounded-xl bg-white/15 p-4 backdrop-blur hover:bg-white/25 lg:col-span-5"
           >
             <div className="text-3xl">📖</div>
             <div className="mt-1 font-semibold">今日新学</div>
-            <div className="text-xs text-brand-100">
-              {settings.activeBooks.length === 0 ? '请先选择词库' : `还剩 ${newRemaining} 个`}
-            </div>
+            {settings.activeBooks.length === 0 ? (
+              <div className="text-xs text-brand-100">请先选择词库</div>
+            ) : (
+              <>
+                <div className="mt-1 text-2xl font-bold text-white">{newRemaining}</div>
+                <div className="text-xs text-brand-100">个新词待学</div>
+                {firstBookName && (
+                  <div className="mt-1 max-w-full truncate rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] text-brand-50">
+                    📚 {firstBookName}
+                  </div>
+                )}
+              </>
+            )}
           </Link>
           <Link
             to="/review"
-            className="card-hover rounded-xl bg-white/15 p-4 backdrop-blur hover:bg-white/25"
+            className="card-hover col-span-1 rounded-xl bg-white/15 p-4 backdrop-blur hover:bg-white/25 lg:col-span-4"
           >
             <div className="text-3xl">🔁</div>
             <div className="mt-1 font-semibold">待复习</div>
-            <div className="text-xs text-brand-100">{stats ? `${stats.due} 个单词到期` : '加载中…'}</div>
+            <div className="mt-1 text-2xl font-bold text-white">{stats ? stats.due : '…'}</div>
+            <div className="text-xs text-brand-100">个单词到期</div>
           </Link>
           <Link
             to="/random"
-            className="card-hover rounded-xl bg-white/15 p-4 backdrop-blur hover:bg-white/25"
+            className="card-hover col-span-1 rounded-xl bg-white/15 p-3 backdrop-blur hover:bg-white/25 lg:col-span-3"
           >
-            <div className="text-3xl">🎲</div>
-            <div className="mt-1 font-semibold">随机抽查</div>
-            <div className="text-xs text-brand-100">检验长期记忆</div>
+            <div className="text-2xl">🎲</div>
+            <div className="mt-1 text-sm font-semibold">随机抽查</div>
+            <div className="mt-0.5 text-[11px] leading-tight text-brand-100">检验长期记忆</div>
           </Link>
         </div>
       </section>

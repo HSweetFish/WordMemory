@@ -28,10 +28,25 @@ describe('mdToHtml 富文本渲染', () => {
     expect(html).toContain('<td><strong>ambition</strong></td>');
   });
 
-  it('依旧转义 HTML，防 XSS', () => {
+  it('剥离未知 HTML 标签（防 XSS），不显示源码', () => {
     const html = mdToHtml('<script>alert(1)</script>');
-    expect(html).not.toContain('<script>');
-    expect(html).toContain('&lt;script&gt;');
+    expect(html).not.toContain('script');
+    expect(html).not.toContain('&lt;');
+    expect(html).toContain('<p>alert(1)</p>');
+  });
+
+  it('轻量 HTML 标签转 Markdown，不残留富文本源码', () => {
+    const html = mdToHtml('<b>词根</b> <i>port</i><br/>下一行<br/><li>列表项</li>');
+    expect(html).toContain('<strong>词根</strong>');
+    expect(html).toContain('<em>port</em>');
+    expect(html).toContain('<li>列表项</li>');
+    expect(html).not.toContain('<b>');
+    expect(html).not.toContain('<br');
+  });
+
+  it('引用块 > 渲染为 blockquote', () => {
+    const html = mdToHtml('> The porters carried the luggage.');
+    expect(html).toContain('<blockquote>');
   });
 
   it('链接与图片只保留文字，不显示裸 URL', () => {
@@ -60,5 +75,18 @@ describe('mdToHtml 富文本渲染', () => {
     expect(html).toContain('<ol>');
     expect(html).toContain('<li>第一点</li>');
     expect(html).toContain('<li>第二点</li>');
+  });
+
+  it('连续列表项合并为同一个列表，不拆成多个 ul/ol', () => {
+    const html = mdToHtml('- 一\n- 二\n- 三');
+    expect((html.match(/<ul>/g) ?? []).length).toBe(1);
+    expect(html).toContain('<li>一</li>');
+    expect(html).toContain('<li>二</li>');
+    expect(html).toContain('<li>三</li>');
+  });
+
+  it('空行分隔的两个列表仍拆开', () => {
+    const html = mdToHtml('- 一\n\n- 二');
+    expect((html.match(/<ul>/g) ?? []).length).toBe(2);
   });
 });

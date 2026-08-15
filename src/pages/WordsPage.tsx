@@ -307,7 +307,7 @@ export default function WordsPage() {
                                         </span>
                                         {l.scheduledDays > 0 && (
                                           <span className="text-slate-300 dark:text-slate-600">
-                                            +{l.scheduledDays}天
+                                            +{l.scheduledDays} 天
                                           </span>
                                         )}
                                       </div>

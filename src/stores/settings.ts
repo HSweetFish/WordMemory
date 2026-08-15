@@ -6,6 +6,7 @@ const DEFAULT_SETTINGS: Settings = {
   dailyNewLimit: 20,
   dailyReviewLimit: 100,
   groupSize: 10,
+  reviewGroupSize: 10,
   activeBooks: [],
   aiProvider: 'openai',
   aiApiKey: '',
@@ -51,6 +52,12 @@ export const useSettings = create<SettingsState>()(
       name: 'wordmemory-settings',
       storage: createJSONStorage(() => localStorage),
       version: 1,
+      // 旧版本 localStorage 缺新增字段（如 reviewGroupSize）时用默认值补齐，
+      // 避免输入框拿到 undefined 显示为空
+      merge: (persisted, current) => ({
+        ...current,
+        settings: { ...DEFAULT_SETTINGS, ...(persisted as { settings?: Partial<Settings> })?.settings },
+      }),
     },
   ),
 );

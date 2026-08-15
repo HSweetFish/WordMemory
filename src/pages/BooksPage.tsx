@@ -63,13 +63,18 @@ export default function BooksPage() {
     setBusyId(id);
     setBooks((bs) => bs.map((b) => (b.id === id ? { ...b, installing: true, progress: 0 } : b)));
     try {
-      await installBook(id, (done, total) => {
+      const n = await installBook(id, (done, total) => {
         setBooks((bs) => bs.map((b) => (b.id === id ? { ...b, progress: Math.round((done / total) * 100) } : b)));
       });
       await refresh();
       // 安装后自动加入学习词库（若之前为空）
       set({ activeBooks: settings.activeBooks.includes(id) ? settings.activeBooks : [...settings.activeBooks, id] });
-      flash(true, `✅ 词库已安装`);
+      // installBook 幂等：返回 0 表示已安装过（空跑），提示需与「首次安装」区分
+      if (n === 0) {
+        flash(true, 'ℹ️ 该词库已安装，无需重复安装');
+      } else {
+        flash(true, `✅ 词库已安装，新增 ${n} 个词条`);
+      }
     } catch (e) {
       flash(false, `安装失败：${e instanceof Error ? e.message : '未知错误'}`);
     } finally {

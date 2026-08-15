@@ -47,6 +47,22 @@ describe('FSRS 排程引擎', () => {
     expect(r.updated.due).toBeLessThan(evening.getTime() + 86400000);
   });
 
+  it('晚上复习的到期词：due 对齐到「N 天后 0 点」，而非精确时刻', () => {
+    // 8/9 21:37 学的词，间隔 2 天 → 旧逻辑 due=8/11 21:37（上午看不到、晚上才冒出来）
+    const evening = new Date('2026-08-09T21:37:00+08:00');
+    const card = scheduler.createCard('reactor', ['cet4'], evening);
+    // 首次评分 → Review，due=8/10 0 点
+    const first = scheduler.review(card, Rating.Good, evening);
+    expect(first.updated.due).toBe(dayRangeInZone('2026-08-10')[0]);
+    // 8/10 0 点到期后复习（间隔应 ≥2 天）→ due 对齐到 8/12 之后的某日 0 点，而非 8/10+2 天的精确时刻
+    const second = scheduler.review(first.updated, Rating.Good, new Date(first.updated.due));
+    const dueDate = dateKey(new Date(second.updated.due));
+    expect(new Date(second.updated.due).getTime()).toBe(dayRangeInZone(dueDate)[0]); // 是该日 0 点
+    expect(second.updated.scheduledDays).toBeGreaterThanOrEqual(2);
+    // 且不早于 8/12 0 点（至少 2 天后）
+    expect(second.updated.due).toBeGreaterThanOrEqual(dayRangeInZone('2026-08-12')[0]);
+  });
+
   it('多轮复习后进入 Review 且间隔递增', () => {
     let { card, lastDue } = graduate();
     expect(card.state).toBe(State.Review);

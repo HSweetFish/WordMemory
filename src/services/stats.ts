@@ -1,5 +1,6 @@
 import { db } from '@/db/schema';
 import type { DailyStat, ReviewLog } from '@/types';
+import { Rating } from '@/types';
 import { dateKey, dateKeyOffset, lastNDays, dayRangeInZone, shiftDateKey } from '@/lib/format';
 
 /**
@@ -8,23 +9,28 @@ import { dateKey, dateKeyOffset, lastNDays, dayRangeInZone, shiftDateKey } from 
  */
 
 /** 增量更新某一天统计（每次答题后调用，避免全量重算）
- * newWord 仅当该词当天首次学习（新建卡片）时为 true；回炉重复学习不重复计新学数。
+ * 口径：totalCount/correctCount 是「次数」（累计答题体现），
+ * newCount 是当天 learn 且评分≥2 的词数（按词去重），
+ * reviewCount 是当天 review/random 的词数（按词去重，回炉补考不重复计）。
+ * 两个去重标志 isNewWord / isNewReview 由调用方在日志写入前算好传入
+ * （写入后查询会包含当前日志，无法判断「首次」）。
  */
 export async function addReviewStat(
   date: string,
   mode: 'learn' | 'review' | 'random',
   rating: number,
   durationSec: number,
-  newWord = false,
+  opts: { isNewWord?: boolean; isNewReview?: boolean } = {},
 ): Promise<void> {
   const existing = await db.dailyStats.get(date);
   const stat: DailyStat = existing ?? { date, newCount: 0, reviewCount: 0, correctCount: 0, totalCount: 0, durationSec: 0 };
   stat.totalCount += 1;
   if (mode === 'learn') {
-    // 新学口径：仅首次学习（newWord）且评分 2-4（有印象及以上）才算“新学”，没学会(1)与回炉均不计入
-    if (newWord && rating >= 2) stat.newCount += 1;
+    // 新学口径：仅首次「学会」（learn 且评分≥2）计入，与按日志去重的口径一致
+    if (opts.isNewWord && rating >= 2) stat.newCount += 1;
   } else {
-    stat.reviewCount += 1;
+    // 复习口径：按词去重（该词当天首次复习才 +1，回炉补考不重复计）
+    if (opts.isNewReview) stat.reviewCount += 1;
   }
   if (rating >= 3) stat.correctCount += 1;
   stat.durationSec += durationSec;
@@ -39,7 +45,7 @@ export async function aggregateDailyStat(date: string): Promise<DailyStat> {
     date,
     // 新学口径：当天 learn 且评分≥2 的词按 wordId 去重（回炉不重复计）
     newCount: new Set(logs.filter((l) => l.mode === 'learn' && l.rating >= 2).map((l) => l.wordId)).size,
-    reviewCount: logs.filter((l) => l.mode === 'review' || l.mode === 'random').length,
+    reviewCount: new Set(logs.filter((l) => l.mode === 'review' || l.mode === 'random').map((l) => l.wordId)).size,
     correctCount: logs.filter((l) => l.rating >= 3).length,
     totalCount: logs.length,
     durationSec: 0, // 时长由会话层累加，见 addDurationSec
@@ -81,8 +87,8 @@ export async function ensureDailyStatsRange(dates: string[]): Promise<void> {
       date,
       // 新学口径与 aggregateDailyStat 一致：当天 learn 且评分≥2 的词去重
       newCount: new Set(dayLogs.filter((l) => l.mode === 'learn' && l.rating >= 2).map((l) => l.wordId)).size,
-      // 复习口径与 aggregateDailyStat 一致：复习 + 抽查均计入
-      reviewCount: dayLogs.filter((l) => l.mode === 'review' || l.mode === 'random').length,
+      // 复习口径与 aggregateDailyStat 一致：复习 + 抽查按词去重（回炉补考不重复计）
+      reviewCount: new Set(dayLogs.filter((l) => l.mode === 'review' || l.mode === 'random').map((l) => l.wordId)).size,
       correctCount: dayLogs.filter((l) => l.rating >= 3).length,
       totalCount: dayLogs.length,
       durationSec: durationMap.get(date) ?? 0,
@@ -154,8 +160,8 @@ export async function rebuildDailyStats(): Promise<{ days: number; logs: number 
       date,
       // 新学口径：当天 learn 且评分≥2 的词按 wordId 去重（回炉/重学不重复计）
       newCount: new Set(dayLogs.filter((l) => l.mode === 'learn' && l.rating >= 2).map((l) => l.wordId)).size,
-      // 复习口径：复习 + 抽查均计入
-      reviewCount: dayLogs.filter((l) => l.mode === 'review' || l.mode === 'random').length,
+      // 复习口径：复习 + 抽查按词去重（回炉补考不重复计）
+      reviewCount: new Set(dayLogs.filter((l) => l.mode === 'review' || l.mode === 'random').map((l) => l.wordId)).size,
       correctCount: dayLogs.filter((l) => l.rating >= 3).length,
       totalCount: dayLogs.length,
       durationSec: durationMap.get(date) ?? 0,
@@ -192,13 +198,14 @@ export async function getTodayNewCount(): Promise<number> {
 }
 
 /**
- * 今日已复习数量（含抽查，与 daily_stats.reviewCount / 热力图「复习」口径一致：
- * 抽查也是复习行为，应计入当天打卡与复习统计；配额消耗另行用 getTodayReviewQuotaUsed 只算排程复习）
+ * 今日已复习单词数（按词去重，含抽查；与 daily_stats.reviewCount / 热力图「复习」口径一致：
+ * 抽查也是复习行为，应计入当天打卡与复习统计；同一词当天多次作答（回炉补考）只算 1 个词，
+ * 答题次数在「累计答题」体现。配额消耗另行用 getTodayReviewQuotaUsed 只算排程复习）
  */
 export async function getTodayReviewCount(): Promise<number> {
   const [start] = dayRangeInZone(dateKey());
   const logs = await db.reviewLogs.where('reviewedAt').aboveOrEqual(start).toArray();
-  return logs.filter((l) => l.mode === 'review' || l.mode === 'random').length;
+  return new Set(logs.filter((l) => l.mode === 'review' || l.mode === 'random').map((l) => l.wordId)).size;
 }
 
 /**
@@ -251,12 +258,45 @@ export async function getLogsForWord(wordId: string): Promise<ReviewLog[]> {
   return db.reviewLogs.where('wordId').equals(wordId.toLowerCase()).sortBy('reviewedAt');
 }
 
-/** 薄弱词：答错次数最多的 N 个已学单词 */
-export async function getWeakWords(limit = 20): Promise<{ wordId: string; wrongCount: number; lastRating: number | null }[]> {
+/** 薄弱词：按 review_logs 统计「没掌握」的答题次数（Again + Hard 均计入——两档都会
+ * 触发回炉重学，都代表薄弱）。基于日志统计而非 userWords.wrongCount：学习流程的
+ * 「回忆确认记错」会删除卡片重建（resetWordLearning），卡片上的 wrongCount 被清零
+ * 导致历史答错丢失；日志永久保留，口径与「记忆历史」一致。
+ * 排序：总薄弱次数降序，同分时明确没记住（Again）更多的靠前。 */
+export interface WeakWordStat {
+  wordId: string;
+  /** 薄弱总次数 = Again + Hard */
+  wrongCount: number;
+  /** 明确没记住（第一档）次数 */
+  againCount: number;
+  /** 模糊/勉强（第二档）次数 */
+  hardCount: number;
+  lastRating: number | null;
+}
+
+export async function getWeakWords(limit = 20): Promise<WeakWordStat[]> {
+  const logs = await db.reviewLogs.toArray();
+  const again = new Map<string, number>();
+  const hard = new Map<string, number>();
+  for (const l of logs) {
+    if (l.rating === Rating.Again) again.set(l.wordId, (again.get(l.wordId) ?? 0) + 1);
+    else if (l.rating === Rating.Hard) hard.set(l.wordId, (hard.get(l.wordId) ?? 0) + 1);
+  }
+  const ids = new Set([...again.keys(), ...hard.keys()]);
   const cards = await db.userWords.toArray();
-  return cards
-    .filter((c) => c.wrongCount > 0)
-    .sort((a, b) => b.wrongCount - a.wrongCount)
-    .slice(0, limit)
-    .map((c) => ({ wordId: c.wordId, wrongCount: c.wrongCount, lastRating: c.lastRating }));
+  const lastRating = new Map(cards.map((c) => [c.wordId, c.lastRating]));
+  return [...ids]
+    .map((wordId) => {
+      const againCount = again.get(wordId) ?? 0;
+      const hardCount = hard.get(wordId) ?? 0;
+      return {
+        wordId,
+        wrongCount: againCount + hardCount,
+        againCount,
+        hardCount,
+        lastRating: lastRating.get(wordId) ?? null,
+      };
+    })
+    .sort((a, b) => b.wrongCount - a.wrongCount || b.againCount - a.againCount)
+    .slice(0, limit);
 }

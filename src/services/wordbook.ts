@@ -161,7 +161,8 @@ export async function searchWords(query: string, limit = 20): Promise<Word[]> {
 }
 
 /** 随机取样词条（四选一干扰项用），排除指定词 */
-export async function getRandomWords(count: number, exclude: Set<string> = new Set()): Promise<Word[]> {  const total = await db.words.count();
+export async function getRandomWords(count: number, exclude: Set<string> = new Set()): Promise<Word[]> {
+  const total = await db.words.count();
   if (total === 0) return [];
   const seen = new Set(exclude);
   const out: Word[] = [];
@@ -215,17 +216,27 @@ export function parseCustomJson(text: string): Word[] {
 export function parseCustomCsv(text: string): Word[] {
   // 剥离 UTF-8 BOM（Excel 导出的 UTF-8 CSV 常带 BOM，docs/IMPORT_FORMAT.md 已建议使用）
   text = text.replace(/^\uFEFF/, '');
-  // 简易 CSV 解析：支持双引号包裹的字段
+  // 简易 CSV 解析：支持双引号包裹的字段与 RFC 4180 的 "" 转义（释义含字面引号时不错位）
   const rows: string[][] = [];
   let row: string[] = [];
   let cur = '';
   let inQuote = false;
   const lines = text.replace(/\r\n?/g, '\n').split('\n');
   for (const line of lines) {
-    for (const ch of line) {
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
       if (inQuote) {
-        if (ch === '"') inQuote = false;
-        else cur += ch;
+        if (ch === '"') {
+          if (line[i + 1] === '"') {
+            // "" → 字面引号（仍在引号内）
+            cur += '"';
+            i++;
+          } else {
+            inQuote = false;
+          }
+        } else {
+          cur += ch;
+        }
       } else if (ch === '"') {
         inQuote = true;
       } else if (ch === ',') {

@@ -9,7 +9,7 @@ interface RatingBarProps {
   mode?: 'learn' | 'review';
 }
 
-/** 新学场景：按"掌握程度"分层，避免"忘记"这种对未学过的词说不通的措辞 */
+/** 新学场景：按“掌握程度”分层，避免“忘记”这种对未学过的词说不通的措辞 */
 const LEARN_RATINGS = [
   { value: 1 as const, label: '没学会', hint: '完全不会', key: '1', cls: 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100' },
   { value: 2 as const, label: '有印象', hint: '记得一点', key: '2', cls: 'border-amber-200 bg-amber-50 text-amber-600 hover:bg-amber-100' },
@@ -17,7 +17,7 @@ const LEARN_RATINGS = [
   { value: 4 as const, label: '很熟练', hint: '轻松掌握', key: '4', cls: 'border-sky-200 bg-sky-50 text-sky-600 hover:bg-sky-100' },
 ];
 
-/** 复习场景：按记忆程度评分（对已学过的词，"忘记/模糊/记得/熟练"更贴切） */
+/** 复习场景：按记忆程度评分（对已学过的词，“忘记/模糊/记得/熟练”更贴切） */
 const REVIEW_RATINGS = [
   { value: 1 as const, label: '忘记', hint: '完全想不起来', key: '1', cls: 'border-red-200 bg-red-50 text-red-600 hover:bg-red-100' },
   { value: 2 as const, label: '模糊', hint: '有点印象', key: '2', cls: 'border-amber-200 bg-amber-50 text-amber-600 hover:bg-amber-100' },
@@ -33,7 +33,7 @@ export default function RatingBar({ onRate, disabled, correct, mode = 'review' }
     <div className="mt-4">
       {correct === true && (
         <div className="mb-2 rounded-lg bg-emerald-50 px-3 py-2 text-center text-sm font-medium text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-300">
-          ✅ 回答正确！按掌握程度评分
+          ✅ 回答正确！{mode === 'learn' ? '按掌握程度评分' : '按记忆程度评分'}
         </div>
       )}
       {correct === false && (

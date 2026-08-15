@@ -67,6 +67,28 @@ describe('重建统计数据', () => {
     expect(await getTodayReviewQuotaUsed()).toBe(1);
   });
 
+  it('复习按词去重：同一词当天多次作答（回炉补考）只算 1 个词', async () => {
+    const now = Date.now();
+    await db.reviewLogs.bulkAdd([
+      log('apple', 'review', 2, now - 60000), // Hard → 回炉
+      log('apple', 'review', 3, now - 30000), // 补考答对
+      log('apple', 'review', 3, now - 10000), // 又答对（当天第三次）
+      log('banana', 'review', 4, now),        // 另一个词
+    ]);
+
+    // 展示口径：按词去重 = apple + banana = 2（不是 4 次）
+    expect(await getTodayReviewCount()).toBe(2);
+
+    const { days } = await rebuildDailyStats();
+    expect(days).toBe(1);
+    const stats = await db.dailyStats.toArray();
+    // 复习词数去重 = 2，答题次数 totalCount 仍是 4（累计答题体现次数）
+    expect(stats[0].reviewCount).toBe(2);
+    expect(stats[0].totalCount).toBe(4);
+    // 配额口径：答对（≥3）的排程复习 = 3 次（Hard 回炉不消耗配额，补考答对消耗）
+    expect(await getTodayReviewQuotaUsed()).toBe(3);
+  });
+
   it('重建时保留旧时长（时长由会话层累加，日志无法还原）', async () => {
     const now = Date.now();
     const today = dateKey(new Date(now));

@@ -14,3 +14,9 @@
     Referrer-Policy = "no-referrer"
     X-Frame-Options = "DENY"
     Content-Security-Policy = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https:; worker-src 'self'; manifest-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+
+# 基元律动（TokenRhythm）API 代理：上游无 CORS 且带 CSRF 校验，
+# 必须用 Edge Function 剥头转发（[[redirects]] 无法剥头），实现见 netlify/edge-functions/api-tr.ts
+[[edge_functions]]
+  path = "/tr/*"
+  function = "api-tr"
