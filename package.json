@@ -1,7 +1,7 @@
 {
   "name": "word-memory",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "背单词应用：初学/复习区分 + FSRS 遗忘曲线 + 可视化仪表盘 + AI 智能分析",
   "type": "module",
   "scripts": {
