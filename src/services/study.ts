@@ -26,9 +26,13 @@ export async function loadLearnQueue(): Promise<Word[]> {
   return getNewWordQueue(settings.activeBooks, Math.min(groupSize, remaining));
 }
 
-/** 复习模式：加载到期复习队列（按到期时间排序）
+/** 复习模式：加载到期/待回炉复习队列（随机顺序）。
  * 严格受每日复习上限约束：今日已复习数会扣减每日配额；
- * 答错的词不消耗配额（当天可补考）；dailyReviewLimit <= 0 表示关闭复习。 */
+ * 答错的词不消耗配额（当天可补考）；dailyReviewLimit <= 0 表示关闭复习。
+ * 「今日待回炉」优先：复习中答错（评分 < 3）的词因 FSRS 已把 due 排到明天，
+ * 光按 due 查会漏掉它们。这些词带 retryDueToday（今天 0 点）标记，必须优先
+ * 纳入本次批次再考一次——即使中途跳转/刷新页面，回来重新加载队列仍能捞回，
+ * 避免「跳转规避回炉」。 */
 export async function loadReviewQueue(limit?: number): Promise<{ word: Word; userWord: UserWord }[]> {
   const { settings } = useSettings.getState();
   const dailyCap = settings.dailyReviewLimit;
@@ -39,12 +43,28 @@ export async function loadReviewQueue(limit?: number): Promise<{ word: Word; use
   // limit 仅为本次批大小，不能突破每日配额
   const batchSize = limit === undefined ? remainingDaily : Math.min(limit, remainingDaily);
   if (batchSize <= 0) return [];
-  const dueCards = await db.userWords
-    .where('due')
-    .belowOrEqual(Date.now())
-    .sortBy('due');
-  if (dueCards.length === 0) return [];
-  const picked = dueCards.slice(0, batchSize);
+  const todayStart = dayRangeInZone(dateKey())[0];
+  // 今日待回炉（retryDueToday == 今天 0 点）优先、无条件纳入：即使 FSRS 已把 due
+  // 排到明天，这些词今天仍欠一次回炉；跳转/刷新后重进复习页也能凭此标记捞回，
+  // 避免「跳转规避回炉」。
+  const retryCards = await db.userWords.where('retryDueToday').equals(todayStart).toArray();
+  const retryLeft = Math.max(0, batchSize - retryCards.length);
+  // 到期词补足剩余名额（回炉词优先占位，到期词不挤掉回炉词）
+  let dueCards: UserWord[] = [];
+  if (retryLeft > 0) {
+    dueCards = await db.userWords.where('due').belowOrEqual(Date.now()).toArray();
+  }
+  // 去重合并后随机打乱：due 对齐到当天 0 点，同批到期词按 sortBy('due') 实际退化为
+  // 字母序；洗牌后取前 batchSize，避免每天按字母顺序复习
+  const byId = new Map<string, UserWord>();
+  for (const c of [...retryCards, ...dueCards]) byId.set(c.wordId, c);
+  const combined = [...byId.values()];
+  if (combined.length === 0) return [];
+  for (let i = combined.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [combined[i], combined[j]] = [combined[j], combined[i]];
+  }
+  const picked = combined.slice(0, batchSize);
   const words = await getWords(picked.map((c) => c.wordId));
   const wordMap = new Map(words.map((w) => [w.w, w]));
   return picked

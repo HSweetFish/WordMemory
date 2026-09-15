@@ -152,11 +152,22 @@ export async function getWords(wordIds: string[]): Promise<Word[]> {
   return db.words.bulkGet(keys).then((list) => list.filter((w): w is Word => !!w));
 }
 
-/** 全文搜索词条（单词前缀匹配，最多 N 条） */
-export async function searchWords(query: string, limit = 20): Promise<Word[]> {
+/** 搜索模式：prefix = 前缀匹配（默认，走索引快）；fuzzy = 模糊子串匹配（任意位置包含，全表扫描） */
+export type SearchMode = 'prefix' | 'fuzzy';
+
+/** 全文搜索词条（prefix 前缀匹配走索引；fuzzy 子串包含匹配，最多 N 条；limit 不传/传 0 时返回全部） */
+export async function searchWords(query: string, limit = 20, mode: SearchMode = 'prefix'): Promise<Word[]> {
   const q = query.trim().toLowerCase();
   if (!q) return [];
-  const words = await db.words.where('w').startsWith(q).limit(limit).toArray();
+  if (mode === 'fuzzy') {
+    const words = await db.words.toArray();
+    const hits = words.filter((w) => w.w.toLowerCase().includes(q));
+    return limit > 0 ? hits.slice(0, limit) : hits;
+  }
+  const words =
+    limit > 0
+      ? await db.words.where('w').startsWith(q).limit(limit).toArray()
+      : await db.words.where('w').startsWith(q).toArray();
   return words;
 }
 
@@ -380,8 +391,10 @@ export interface ListWordsOptions {
   bookId?: string;
   /** 学习状态过滤 */
   status?: 'all' | 'new' | 'learning' | 'consolidating' | 'mastered' | 'due';
-  /** 单词前缀搜索 */
+  /** 单词搜索（默认前缀匹配，可切模糊） */
   query?: string;
+  /** 搜索模式：prefix（默认，前缀）/ fuzzy（子串包含） */
+  searchMode?: SearchMode;
   /** 返回条数上限（默认 300） */
   limit?: number;
 }
@@ -389,12 +402,16 @@ export interface ListWordsOptions {
 /**
  * 词表查询：词书筛选 + 状态筛选 + 前缀搜索，按 COCA 词频升序（常用词优先，未知词频排最后）。
  * 词表页/全局搜索共用；多词库共有词自动去重（words 主键唯一）。
+ * 返回 { items, total }：items 为当前页（受 limit 截断），total 为过滤后的全量计数（不受 limit 影响）。
  */
-export async function listWordsWithStatus(opts: ListWordsOptions = {}): Promise<WordWithStatus[]> {
-  const { bookId, status = 'all', query, limit = 300 } = opts;
+export async function listWordsWithStatus(
+  opts: ListWordsOptions = {},
+): Promise<{ items: WordWithStatus[]; total: number }> {
+  const { bookId, status = 'all', query, searchMode, limit = 300 } = opts;
   let words: Word[];
   if (query && query.trim()) {
-    words = await searchWords(query, Math.max(limit, 100));
+    // 搜索取全量（limit=0），由本函数统一截断，保证 total 准确
+    words = await searchWords(query, 0, searchMode);
   } else if (bookId) {
     words = await db.words.where('books').equals(bookId).toArray();
   } else {
@@ -430,7 +447,8 @@ export async function listWordsWithStatus(opts: ListWordsOptions = {}): Promise<
       (a.word.freq ?? Number.MAX_SAFE_INTEGER) - (b.word.freq ?? Number.MAX_SAFE_INTEGER) ||
       a.word.w.localeCompare(b.word.w),
   );
-  return filtered.slice(0, limit);
+  const total = filtered.length;
+  return { items: filtered.slice(0, limit), total };
 }
 
 /** 已安装词书列表（内置已安装 + 自定义），词表页筛选用 */

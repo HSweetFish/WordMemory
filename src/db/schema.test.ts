@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import 'fake-indexeddb/auto';
 import { db, resetDatabase } from '@/db/schema';
-import { installBookData, isBookInstalled, uninstallBook, getNewWordQueue, importCustomWords, parseCustomCsv, getCustomBooks } from '@/services/wordbook';
+import { installBookData, isBookInstalled, uninstallBook, getNewWordQueue, importCustomWords, parseCustomCsv, getCustomBooks, searchWords, listWordsWithStatus } from '@/services/wordbook';
 import { aggregateDailyStat, getDailyStats, getDueCount, getMasteryDistribution, ensureDailyStats } from '@/services/stats';
 import { dateKey, dateKeyOffset } from '@/lib/format';
 import type { UserWord } from '@/types';
@@ -212,5 +212,24 @@ describe('数据层', () => {
     expect(await getDueCount()).toBe(0);
     const dist = await getMasteryDistribution();
     expect(dist.reduce((s, d) => s + d.count, 0)).toBe(2);
+  });
+
+  it('搜索模式：prefix 前缀匹配 vs fuzzy 子串匹配', async () => {
+    await installBookData('testbook', TEST_BOOK.words);
+    // 前缀模式：搜 ban 只命中 banana
+    expect((await searchWords('ban')).map((w) => w.w)).toEqual(['banana']);
+    // 前缀模式：搜 ana 不命中（不在开头）
+    expect(await searchWords('ana')).toEqual([]);
+    // 模糊模式：搜 ana 命中 banana（子串包含）
+    expect((await searchWords('ana', 20, 'fuzzy')).map((w) => w.w)).toEqual(['banana']);
+    // 模糊模式：全小写忽略大小写
+    expect((await searchWords('PPLE', 20, 'fuzzy')).map((w) => w.w)).toEqual(['apple']);
+    // listWordsWithStatus 透传 searchMode：total 按模糊命中统计
+    const { items, total } = await listWordsWithStatus({ query: 'ana', searchMode: 'fuzzy' });
+    expect(total).toBe(1);
+    expect(items[0].word.w).toBe('banana');
+    // 默认仍是前缀模式
+    const { total: t2 } = await listWordsWithStatus({ query: 'ana' });
+    expect(t2).toBe(0);
   });
 });

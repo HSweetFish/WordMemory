@@ -115,7 +115,7 @@ describe('学习闭环（学习服务 + 会话落库）', () => {
     expect(await getTodayReviewCount()).toBe(1);
   });
 
-  it('复习队列：到期词按 due 排序，未到期不出现', async () => {
+  it('复习队列：只含到期词，未到期不出现', async () => {
     const now = Date.now();
     // 直接构造两张卡片：一张已到期，一张未到期
     await db.userWords.bulkPut([
@@ -149,7 +149,9 @@ describe('学习闭环（学习服务 + 会话落库）', () => {
     await db.userWords.bulkPut([dueCard('apple', now - 3000), dueCard('banana', now - 2000), dueCard('cherry', now - 1000)]);
     useSettings.getState().set({ dailyReviewLimit: 2 });
     const queue = await loadReviewQueue();
-    expect(queue.map((it) => it.word.w)).toEqual(['apple', 'banana']);
+    // 随机顺序：只断言取到 2 个（数量受上限约束），具体词随机
+    expect(queue).toHaveLength(2);
+    expect(queue.every((it) => ['apple', 'banana', 'cherry'].includes(it.word.w))).toBe(true);
   });
 
   it('复习队列：今日已复习数扣减每日配额', async () => {
@@ -179,18 +181,43 @@ describe('学习闭环（学习服务 + 会话落库）', () => {
     expect(queue).toHaveLength(2);
   });
 
-  it('复习队列：答错不消耗每日配额，当天可再复习', async () => {
+  it('复习队列：答错不消耗每日配额，且待回炉词优先捞回（跳转规避修复）', async () => {
     const now = Date.now();
-    // 只有 1 个配额，但有 2 张到期卡
+    // 2 个配额，2 张到期卡
     await db.userWords.bulkPut([dueCard('apple', now - 3000), dueCard('banana', now - 2000)]);
-    useSettings.getState().set({ dailyReviewLimit: 1 });
-    // 复习 apple 答错（Again）→ 不消耗配额
+    useSettings.getState().set({ dailyReviewLimit: 2 });
+    // 复习 apple 答错（Again）→ 不消耗配额，due 被 FSRS 排到明天
     const existing = await db.userWords.get('apple');
     await recordRating(TEST_BOOK.words[0], existing ?? null, Rating.Again, 'review', 3000);
-    // 配额仍剩 1 → banana（若 apple 回炉 due 很近则也可能在列）必然可继续复习
-    const queue = await loadReviewQueue();
-    expect(queue.length).toBeGreaterThan(0);
-    expect(queue.map((it) => it.word.w)).toContain('banana');
+    const apple = await db.userWords.get('apple');
+    // apple 的 due 已被 FSRS 排走（对齐日历日 + fuzz，可能是明天/后天 0 点），普通 due 查询查不到它
+    expect(apple?.due).toBeGreaterThan(Date.now());
+    // 关键修复：即使 due 已过期（排到明天后），retryDueToday=今天 0 点，重新加载队列仍把 apple 捞回回炉
+    const retryMark = dayRangeInZone(dateKey())[0];
+    expect(apple?.retryDueToday).toBe(retryMark);
+    const queue = await loadReviewQueue(10);
+    const wordIds = queue.map((it) => it.word.w);
+    expect(wordIds).toContain('apple'); // 回炉词优先注入
+    expect(wordIds).toContain('banana'); // 未到期限制的到期词也在列
+  });
+
+  it('复习队列：答错后跳转再回来（重新 start），回炉不丢失', async () => {
+    const now = Date.now();
+    await db.userWords.bulkPut([dueCard('apple', now - 3000)]);
+    useSettings.getState().set({ dailyReviewLimit: 10 });
+    const existing = await db.userWords.get('apple');
+    await recordRating(TEST_BOOK.words[0], existing ?? null, Rating.Hard, 'review', 3000);
+    // 模拟用户跳转首页再回到复习页：重新加载队列（不手动 start，直接 loadReviewQueue）
+    const card = await db.userWords.get('apple');
+    // FSRS 已把答错词排走（relearning_steps+对齐明天 0 点，fuzz 可能 ±1 天），due 不再是今天到期
+    expect(card?.due).toBeGreaterThan(Date.now());
+    // 待回炉标记今天 0 点 → 必然被重新捞回
+    const queue = await loadReviewQueue(1);
+    expect(queue.map((it) => it.word.w)).toContain('apple');
+    // 补考通过后，待回炉标记清除
+    await recordRating(TEST_BOOK.words[0], card ?? null, Rating.Good, 'review', 2000);
+    const cleared = await db.userWords.get('apple');
+    expect(cleared?.retryDueToday).toBeNull();
   });
 
   it('复习队列：答对消耗每日配额（对照）', async () => {

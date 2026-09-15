@@ -16,6 +16,9 @@ export type StudyMode = 'learn' | 'review' | 'random';
  * （同一题记两次 / 队列错位）。锁保证同一时刻只有一笔在途，后者直接丢弃。
  */
 let ratingLock = false;
+/** 会话代次：每次 start 递增、reset 也递增；在途 start 完成时若代次不符则丢弃结果，
+ *  避免页面切换后旧会话的异步加载结果覆盖新页面状态 */
+let sessionToken = 0;
 
 interface StudyItem {
   word: Word;
@@ -109,6 +112,10 @@ export const useSession = create<SessionState>()((set, get) => ({
   ...initialState,
 
   start: async (mode) => {
+    // 防并发重入：上一笔 start 尚未加载完成时丢弃新触发（快速路由切换 / StrictMode 双挂载）
+    if (get().status === 'loading') return;
+    // 本笔 start 的代次：完成时若已被 reset / 新 start 取代则丢弃结果
+    const token = ++sessionToken;
     set({ status: 'loading', error: null });
     try {
       const now = Date.now();
@@ -136,6 +143,7 @@ export const useSession = create<SessionState>()((set, get) => ({
         const doneToday = await getTodayNewCount();
         const remaining = Math.max(0, settings.dailyNewLimit - doneToday);
         const hasMore = words.length > 0 && remaining > words.length;
+        if (token !== sessionToken) return; // 已被 reset / 新 start 取代，丢弃
         set({
           ...base,
           queue: words.map((word) => ({ word, userWord: null })),
@@ -145,6 +153,7 @@ export const useSession = create<SessionState>()((set, get) => ({
         });
       } else if (mode === 'random') {
         const items = await loadRandomQueue();
+        if (token !== sessionToken) return;
         set({
           ...base,
           queue: items.map((it) => ({ word: it.word, userWord: it.userWord })),
@@ -162,6 +171,7 @@ export const useSession = create<SessionState>()((set, get) => ({
         const remainingDaily = Math.max(0, settings.dailyReviewLimit - doneToday);
         const dueCount = await getDueCount();
         const hasMore = items.length > 0 && dueCount > items.length && remainingDaily > items.length;
+        if (token !== sessionToken) return;
         set({
           ...base,
           queue: items.map((it) => ({ word: it.word, userWord: it.userWord })),
@@ -171,6 +181,7 @@ export const useSession = create<SessionState>()((set, get) => ({
         });
       }
     } catch (e) {
+      if (token !== sessionToken) return;
       set({ status: 'idle', error: e instanceof Error ? e.message : '加载失败' });
     }
   },
@@ -409,5 +420,8 @@ export const useSession = create<SessionState>()((set, get) => ({
   },
 
   setPractice: (practice) => set({ practice }),
-  reset: () => set({ ...initialState, queue: [], status: 'idle' }),
+  reset: () => {
+    sessionToken++; // 使在途 start 失效（页面切换时旧会话加载结果不再写入）
+    set({ ...initialState, queue: [], status: 'idle' });
+  },
 }));

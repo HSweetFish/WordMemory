@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import StudySession from '@/components/study/StudySession';
+import TodayProgressPanel from '@/components/study/TodayProgressPanel';
 import { useSession } from '@/stores/session';
 
 /** 学习页：今日新词学习流 */
@@ -12,6 +13,7 @@ export default function LearnPage() {
   return (
     <div>
       <StudySession mode="learn" />
+      <TodayProgressPanel />
     </div>
   );
 }

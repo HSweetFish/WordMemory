@@ -86,7 +86,7 @@ export default function HomePage() {
         <div className="pointer-events-none absolute -bottom-16 -left-10 h-40 w-40 rounded-full bg-white/10 blur-xl" />
         <div className="relative flex items-start justify-between">
           <div>
-            <h1 className="text-2xl font-bold">欢迎回来 👋</h1>
+            <h1 className="text-2xl font-bold">欢迎回来</h1>
             <p className="mt-1 text-sm text-brand-100">新词和复习都由遗忘曲线排好，到点打开就能学。</p>
           </div>
           {stats && stats.streak > 0 && (
@@ -108,8 +108,8 @@ export default function HomePage() {
               <div className="text-xs text-brand-100">请先选择词库</div>
             ) : (
               <>
-                <div className="mt-1 text-2xl font-bold text-white">{newRemaining}</div>
-                <div className="text-xs text-brand-100">个新词待学</div>
+                <div className="mt-1 text-2xl font-bold text-white">{newRemaining}个</div>
+                <div className="text-xs text-brand-100">新词待新学</div>
                 {firstBookName && (
                   <div className="mt-1 max-w-full truncate rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] text-brand-50">
                     📚 {firstBookName}
@@ -124,16 +124,17 @@ export default function HomePage() {
           >
             <div className="text-3xl">🔁</div>
             <div className="mt-1 font-semibold">待复习</div>
-            <div className="mt-1 text-2xl font-bold text-white">{stats ? stats.due : '…'}</div>
-            <div className="text-xs text-brand-100">个单词到期</div>
+            <div className="mt-1 text-2xl font-bold text-white">{stats ? `${stats.due}个` : '…'}</div>
+            <div className="text-xs text-brand-100">单词待复习</div>
           </Link>
+          {/* 随机抽查：原位置保留，仅去掉背景/边框/圆形，内容格式与原来一致 */}
           <Link
             to="/random"
-            className="card-hover col-span-1 rounded-xl bg-white/15 p-3 backdrop-blur hover:bg-white/25 lg:col-span-3"
+            className="card-hover col-span-1 place-self-center flex flex-col items-center justify-center text-center lg:col-span-3"
           >
-            <div className="text-2xl">🎲</div>
-            <div className="mt-1 text-sm font-semibold">随机抽查</div>
-            <div className="mt-0.5 text-[11px] leading-tight text-brand-100">检验长期记忆</div>
+            <div className="text-3xl leading-none">🎲</div>
+            <div className="mt-1 font-semibold">随机抽查</div>
+            <div className="mt-0.5 text-xs leading-tight text-brand-100">检验长期记忆</div>
           </Link>
         </div>
       </section>

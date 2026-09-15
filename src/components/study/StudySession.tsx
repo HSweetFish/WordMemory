@@ -12,11 +12,13 @@ import Quiz from '@/components/study/Quiz';
 import Spell from '@/components/study/Spell';
 import RatingBar from '@/components/study/RatingBar';
 import { ratingLabel } from '@/lib/history';
+import { getTodaySummary, type TodaySummary } from '@/services/stats';
+import { countNewWords } from '@/services/wordbook';
 
-const PRACTICE_TABS: { value: PracticeMode; label: string; icon: string }[] = [
-  { value: 'flip', label: '翻转', icon: '🃏' },
-  { value: 'quiz', label: '四选一', icon: '🎯' },
-  { value: 'spell', label: '拼写', icon: '⌨️' },
+const PRACTICE_TABS: { value: PracticeMode; label: string }[] = [
+  { value: 'flip', label: '翻转' },
+  { value: 'quiz', label: '四选一' },
+  { value: 'spell', label: '拼写' },
 ];
 
 interface StudySessionProps {
@@ -33,14 +35,66 @@ export default function StudySession({ mode }: StudySessionProps) {
   // 学习模式重学提示：评分 1-2 未掌握 → 词排到队尾再学一遍，短暂提示用户
   const [recycleNotice, setRecycleNotice] = useState<string | null>(null);
   const noticeTimer = useRef<number>(0);
+  // 完成页空态（无任务）时展示的今日概况：今日新学/复习/正确率/待复习/打卡
+  const [today, setToday] = useState<TodaySummary | null>(null);
+  // 词库剩余未学词数（学习页「今日新学进度」分母：min(配额, 实际未学)，避免按硬编码配额虚算）
+  const [remainingNew, setRemainingNew] = useState<number | null>(null);
 
-  // 首次挂载自动开始
+  // 词库剩余未学词数（与首页口径一致：countNewWords）
+  // 每次作答后刷新：学习会消耗剩余未学，若只在挂载时取一次（快照），
+  // 学到中途剩余数不会下降，与今日已学相加会虚高（如已学 140、剩余快照 44 → 分母 184）
   useEffect(() => {
-    if (session.status === 'idle') {
-      void session.start(mode);
+    if (settings.activeBooks.length === 0) {
+      setRemainingNew(0);
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    let cancelled = false;
+    (async () => {
+      const n = await countNewWords(settings.activeBooks);
+      if (!cancelled) setRemainingNew(n);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [settings.activeBooks.join(','), session.attemptCount, session.status]);
+
+  // 学习页「今日新学」分母：今日可学总量 = min(配额, 词库剩余未学 + 今日已学)；
+  // 剩余未学是当前时刻值，今天已学部分已不在其中必须加回，否则词库快学完时
+  // 分母会小于分子（如已学 100、剩余 44 → 误显示 100/44 词）；
+  // 词库全部学完(剩余 0)时退化为今天已学量——今天没学则为 0，主卡显示 0/0
+  const learnTotal = today
+    ? remainingNew !== null && remainingNew <= 0
+      ? today.newCount
+      : Math.max(1, Math.min(settings.dailyNewLimit, (remainingNew ?? settings.dailyNewLimit) + today.newCount))
+    : 0;
+  // 复习页「今日复习」分母：实际到期量 = 已复习 + 待复习（今天无到期时为 0，主卡显示 0/0）
+  const reviewTotal = today ? today.reviewCount + today.dueCount : 0;
+
+  // 完成页空态时加载今日概况（无任务 = 今日学习/复习已做完，展示今日成果而非空白提示）
+  useEffect(() => {
+    if (session.status === 'finished' && session.doneCount === 0) {
+      let cancelled = false;
+      void getTodaySummary().then((s) => {
+        if (!cancelled) setToday(s);
+      });
+      return () => {
+        cancelled = true;
+      };
+    }
+    setToday(null);
+  }, [session.status, session.doneCount]);
+
+  // 首次挂载自动开始。
+  // 必须用 useSession.getState() 读最新状态，而非渲染闭包 session.status：
+  // 学习页 → 复习页直接切换时，本组件首帧渲染读到的是旧会话残留的 running，
+  // 若按闭包快照判断会误判「已在运行」而不启动；旧页 cleanup 的 reset() 在 paint
+  // 后的 passive unmount 阶段才执行，getState() 才能拿到 reset 后的 idle。
+  useEffect(() => {
+    const s = useSession.getState();
+    if (s.status === 'idle') {
+      void s.start(mode);
+    }
+  }, [mode]);
 
   // 回忆确认：翻面显示英文时跟随「自动朗读」设置发音（与新学卡片一致）；
   // 每次进入下一词 / 翻面都会触发（依赖 recallIndex 与 recallRevealed）
@@ -151,9 +205,117 @@ export default function StudySession({ mode }: StudySessionProps) {
         </div>
 
         {session.doneCount === 0 ? (
-          <p className="mt-4 text-center text-slate-500 dark:text-slate-400">
-            {mode === 'learn' ? '今日新词已学完（或今日配额已用完），明天再来吧' : mode === 'random' ? '还没有已学单词，先去「学习」页学几个吧' : '暂无到期需要复习的单词'}
-          </p>
+          // 无任务：学习/复习页分别展示「今日学习/复习情况」（抽查页保留简单提示）
+          mode === 'random' ? (
+            <p className="mt-4 text-center text-slate-500 dark:text-slate-400">
+              还没有已学单词，先去「学习」页学几个吧
+            </p>
+          ) : mode === 'learn' ? (
+            <div className="mt-5">
+              <div className="mb-3 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
+                今日学习情况
+              </div>
+              {!today ? (
+                <div className="py-4 text-center text-sm text-slate-400">统计中…</div>
+              ) : (
+                <>
+                  {/* 主角：今日新学进度（已学 / 实际可学量 = min(配额, 词库剩余未学)） */}
+                  <div className="rounded-xl bg-brand-soft-gradient p-3 text-center">
+                    <div className="text-2xl font-bold text-brand-600">
+                      {today.newCount}
+                      <span className="text-sm font-normal text-slate-400"> / {learnTotal} 词</span>
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-400">今日新学进度</div>
+                    <div className="mx-auto mt-2 h-1.5 w-full max-w-[200px] overflow-hidden rounded-full bg-slate-200/70 dark:bg-slate-700/60">
+                      <div
+                        className="progress-gradient h-full rounded-full"
+                        style={{ width: `${learnTotal > 0 ? Math.min(100, (today.newCount / learnTotal) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                  {/* 辅助：正确率 / 连续打卡 / 今日答题（学习页只看自己的指标，不放复习） */}
+                  <div className="mt-3 grid grid-cols-3 gap-3 text-center">
+                    <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/50">
+                      <div className="text-xl font-bold text-emerald-600">
+                        {today.totalCount > 0 ? Math.round((today.correctCount / today.totalCount) * 100) : 0}%
+                      </div>
+                      <div className="text-xs text-slate-400">今日正确率</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/50">
+                      <div className="text-xl font-bold text-amber-600">{today.streak}</div>
+                      <div className="text-xs text-slate-400">连续打卡</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/50">
+                      <div className="text-xl font-bold text-slate-600 dark:text-slate-200">{today.totalCount}</div>
+                      <div className="text-xs text-slate-400">今日答题</div>
+                    </div>
+                  </div>
+                  {/* 引导：还有到期复习词时去复习页 */}
+                  {today.dueCount > 0 && (
+                    <Link
+                      to="/review"
+                      className="mt-3 block rounded-xl border border-slate-200 bg-white/60 px-4 py-2.5 text-center text-sm font-medium text-slate-600 transition-colors hover:border-sky-300 hover:text-sky-600 dark:border-slate-700 dark:bg-slate-800/40 dark:text-slate-300 dark:hover:border-sky-700 dark:hover:text-sky-400"
+                    >
+                      还有 {today.dueCount} 个单词待复习 →
+                    </Link>
+                  )}
+                </>
+              )}
+              <p className="mt-3 text-center text-slate-500 dark:text-slate-400">
+                今日新词已学完（或今日配额已用完），明天再来吧
+              </p>
+            </div>
+          ) : (
+            <div className="mt-5">
+              <div className="mb-3 text-center text-sm font-semibold text-slate-500 dark:text-slate-400">
+                今日复习情况
+              </div>
+              {!today ? (
+                <div className="py-4 text-center text-sm text-slate-400">统计中…</div>
+              ) : (
+                <>
+                  {/* 主角：今日复习进度（已复习 / 实际到期量 = 已复习 + 待复习） */}
+                  <div className="rounded-xl bg-brand-soft-gradient p-3 text-center">
+                    <div className="text-2xl font-bold text-sky-600">
+                      {today.reviewCount}
+                      <span className="text-sm font-normal text-slate-400"> / {reviewTotal} 词</span>
+                    </div>
+                    <div className="mt-0.5 text-xs text-slate-400">今日复习进度</div>
+                    <div className="mx-auto mt-2 h-1.5 w-full max-w-[200px] overflow-hidden rounded-full bg-slate-200/70 dark:bg-slate-700/60">
+                      <div
+                        className="h-full rounded-full bg-sky-500/80"
+                        style={{ width: `${reviewTotal > 0 ? Math.min(100, (today.reviewCount / reviewTotal) * 100) : 0}%` }}
+                      />
+                    </div>
+                  </div>
+                  {/* 辅助：正确率 / 连续打卡 / 预计明天复习数（复习页只看自己的指标，不放新学） */}
+                  <div className="mt-3 grid grid-cols-3 gap-3 text-center">
+                    <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/50">
+                      <div className="text-xl font-bold text-emerald-600">
+                        {today.totalCount > 0 ? Math.round((today.correctCount / today.totalCount) * 100) : 0}%
+                      </div>
+                      <div className="text-xs text-slate-400">今日正确率</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/50">
+                      <div className="text-xl font-bold text-amber-600">{today.streak}</div>
+                      <div className="text-xs text-slate-400">连续打卡</div>
+                    </div>
+                    <div className="rounded-xl bg-slate-50 p-3 dark:bg-slate-800/50">
+                      <div className="text-xl font-bold text-slate-600 dark:text-slate-200">{today.dueTomorrow}</div>
+                      <div className="text-xs text-slate-400">预计明天复习</div>
+                    </div>
+                  </div>
+                </>
+              )}
+              <p className="mt-3 text-center text-slate-500 dark:text-slate-400">
+                {today && reviewTotal > 0
+                  ? today.dueCount === 0
+                    ? '今日到期词已全部复习 ✓'
+                    : '今日复习配额已用完，明天继续吧'
+                  : '今日无到期复习任务，明天再来吧'}
+              </p>
+            </div>
+          )
         ) : (
           <div className="mt-5 grid grid-cols-3 gap-3 text-center">
             <div className="bg-brand-soft-gradient rounded-xl p-3">
@@ -277,7 +439,7 @@ export default function StudySession({ mode }: StudySessionProps) {
               <div className="mt-4 space-y-1.5">
                 {lines.map((g, i) => (
                   <div key={i} className="text-base leading-relaxed text-slate-500 dark:text-slate-400">
-                    <span className="text-sm font-bold text-brand-600 dark:text-brand-400">{g.pos}</span>
+                    <span className="font-bold text-brand-600 dark:text-brand-400">{g.pos}</span>
                     <span className="ml-2">{g.meaning}</span>
                   </div>
                 ))}
@@ -342,7 +504,7 @@ export default function StudySession({ mode }: StudySessionProps) {
                   : 'text-slate-500 dark:text-slate-400'
               }`}
             >
-              {tab.icon} {tab.label}
+              {tab.label}
             </button>
           ))}
         </div>

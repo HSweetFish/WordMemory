@@ -92,10 +92,29 @@ export async function chat(messages: ChatMessage[], opts: ChatOptions = {}): Pro
     const detail = await res.text().catch(() => '');
     throw new Error(`AI 请求失败（HTTP ${res.status}）：${detail.slice(0, 200)}`);
   }
-  const data = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) throw new Error('AI 返回内容为空');
-  return content;
+  const data = (await res.json()) as {
+    choices?: {
+      message?: { content?: string | null; reasoning_content?: string | null };
+      finish_reason?: string | null;
+    }[];
+  };
+  const choice = data.choices?.[0];
+  const message = choice?.message;
+  const content = typeof message?.content === 'string' ? message.content : '';
+  if (content) return content;
+  // 推理模型（如 deepseek-v4-flash-0731）先输出思考（reasoning_content）再输出正文：
+  // 当 max_tokens 被思考占满时 content 为空——自动放大上限重试一次，避免误报「返回内容为空」
+  if (message?.reasoning_content) {
+    const current = opts.maxTokens ?? 1200;
+    if (current < 8192) {
+      return chat(messages, { ...opts, maxTokens: Math.max(8192, current * 4) });
+    }
+    throw new Error('AI 返回内容为空：思考内容占满输出上限，请更换模型或稍后重试');
+  }
+  if (choice?.finish_reason === 'length') {
+    throw new Error('AI 输出超长被截断，请稍后重试');
+  }
+  throw new Error('AI 返回内容为空');
 }
 
 /** 测试连接：发一条极简请求验证 Key 与端点
@@ -235,7 +254,7 @@ export async function generatePeriodReport(kind: ReportKind, offset: number): Pr
     weak,
     daily,
   });
-  return chat(messages, { maxTokens: 1600 });
+  return chat(messages, { maxTokens: 4096 });
 }
 
 /** 按自然周聚合每日明细（月报用）：[{date: 第N周, newCount, reviewCount, correctRate}] */
@@ -281,5 +300,5 @@ export async function analyzeWeakWords(): Promise<string> {
       hardCount: w.hardCount,
     }))
     .filter((it) => !!it.word);
-  return chat(buildWeakWordsPrompt(items), { maxTokens: 1200 });
+  return chat(buildWeakWordsPrompt(items), { maxTokens: 4096 });
 }

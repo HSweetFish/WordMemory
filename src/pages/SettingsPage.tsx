@@ -372,7 +372,7 @@ export default function SettingsPage() {
             desc="今天「今日新学」最多学习的新词数"
             value={settings.dailyNewLimit}
             min={1}
-            max={200}
+            max={500}
             step={1}
             suffix="个"
             onChange={(v) => set({ dailyNewLimit: v })}

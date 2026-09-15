@@ -34,6 +34,20 @@ export class WordMemoryDB extends Dexie {
       dailyStats: 'date',
       meta: 'key',
     });
+    // v3：UserWord 新增 retryDueToday（今日待回炉截止）。给旧卡片补默认值，
+    // 并加索引以便批量捞回「今天答错、尚未重新考过」的词做回炉。
+    this.version(3)
+      .stores({
+        userWords: 'wordId, due, state, retryDueToday, *bookIds',
+      })
+      .upgrade((tx) =>
+        tx
+          .table('userWords')
+          .toCollection()
+          .modify((w) => {
+            if (w.retryDueToday === undefined) w.retryDueToday = null;
+          }),
+      );
   }
 }
 

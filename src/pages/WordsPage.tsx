@@ -43,7 +43,11 @@ export default function WordsPage() {
   const [bookId, setBookId] = useState('');
   const [status, setStatus] = useState<StatusFilter>('all');
   const [query, setQuery] = useState('');
+  /** 搜索模式：false = 前缀匹配（默认），true = 模糊子串匹配（如搜 tion 可搜到 ambition） */
+  const [fuzzy, setFuzzy] = useState(false);
   const [list, setList] = useState<WordWithStatus[]>([]);
+  /** 当前筛选条件下的真实匹配总数（不受列表 limit 截断影响） */
+  const [matchedTotal, setMatchedTotal] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [historyByWord, setHistoryByWord] = useState<Record<string, DayGroup[]>>({});
@@ -67,22 +71,22 @@ export default function WordsPage() {
     window.clearTimeout(debounceRef.current);
     debounceRef.current = window.setTimeout(async () => {
       setLoading(true);
-      const items = await listWordsWithStatus({
+      const { items, total } = await listWordsWithStatus({
         bookId: bookId || undefined,
         status,
         query: query || undefined,
+        searchMode: fuzzy ? 'fuzzy' : 'prefix',
         limit: 500,
       });
       setList(items);
+      setMatchedTotal(total);
       setLoading(false);
     }, query ? 300 : 0);
     return () => window.clearTimeout(debounceRef.current);
-  }, [bookId, status, query]);
+  }, [bookId, status, query, fuzzy]);
 
-  const totalCount = useMemo(
-    () => (bookId ? books.find((b) => b.id === bookId)?.count : undefined),
-    [books, bookId],
-  );
+  // 选中某本词书时的静态词数（manifest 口径，供对照）
+  const bookTotal = useMemo(() => (bookId ? books.find((b) => b.id === bookId)?.count : undefined), [books, bookId]);
 
   const toggle = (w: string) => {
     const opening = !expanded.has(w);
@@ -152,12 +156,32 @@ export default function WordsPage() {
             ))}
           </select>
         </div>
+        {/* 搜索模式开关：前缀匹配（默认，快）/ 模糊匹配（任意位置，如搜 tion 可搜到 ambition） */}
+        <label className="flex w-fit cursor-pointer select-none items-center gap-2 text-xs text-slate-500 dark:text-slate-400">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={fuzzy}
+            onClick={() => setFuzzy((v) => !v)}
+            className={`relative h-5 w-9 rounded-full transition-colors ${fuzzy ? 'bg-brand-500' : 'bg-slate-300 dark:bg-slate-600'}`}
+          >
+            <span
+              className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${fuzzy ? 'left-[18px]' : 'left-0.5'}`}
+            />
+          </button>
+          <span>
+            模糊匹配
+            <span className="ml-1 text-slate-400 dark:text-slate-500">搜任意片段，如「tion」也能搜到 ambition</span>
+          </span>
+        </label>
       </div>
 
       {/* 计数 */}
       {!loading && (
         <p className="text-xs text-slate-400 dark:text-slate-500">
-          共 {list.length} 词{totalCount != null && !query ? ` / 词库共 ${totalCount} 词` : ''}
+          共 {matchedTotal ?? list.length} 词
+          {!query && matchedTotal != null && matchedTotal > 500 ? `（当前只显示前 ${list.length} 个，缩小搜索或筛选查看）` : ''}
+          {bookTotal != null && !query ? ` / 词库共 ${bookTotal} 词` : ''}
         </p>
       )}
 

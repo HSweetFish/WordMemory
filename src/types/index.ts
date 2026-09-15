@@ -67,6 +67,14 @@ export interface UserWord {
   wrongCount: number;
   /** 最近一次评分 */
   lastRating: Rating | null;
+  /**
+   * 今日待回炉截止（当天 0 点时间戳）：复习/学习中答错（评分 < 3）时置为当
+   * 天 0 点，表示「今天还需再考一次」。回炉补考通过（评分 ≥ 3）后清除。
+   * 持久化目的：回炉状态不丢——若用户在回炉前跳转页面/刷新，下次加载队列
+   * 时仍能凭此字段把未完成的回炉词捞回本日批次，避免「跳转规避回炉」。
+   * 无待回炉时省略/为 null。
+   */
+  retryDueToday?: number | null;
 }
 
 /** 答题事件记录（IndexedDB: review_logs） */

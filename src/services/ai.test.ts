@@ -1,9 +1,23 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { mdToHtml } from '@/lib/markdown';
-import { buildPeriodReportPrompt, buildMnemonicPrompt, buildWeakWordsPrompt, aggregateDailyByWeek, AI_PROVIDERS } from '@/services/ai';
+import { buildPeriodReportPrompt, buildMnemonicPrompt, buildWeakWordsPrompt, aggregateDailyByWeek, AI_PROVIDERS, chat } from '@/services/ai';
+import { useSettings } from '@/stores/settings';
 import type { Word } from '@/types';
 
+/** stub fetch 返回指定 OpenAI 兼容响应体 */
+function stubChatResponse(payload: unknown) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () => ({ ok: true, json: async () => payload }) as Response),
+  );
+}
+
 describe('AI 模块', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    useSettings.getState().reset();
+  });
+
   it('服务商预设完整（OpenAI 兼容端点）', () => {
     expect(AI_PROVIDERS.openai.baseUrl).toContain('openai.com');
     expect(AI_PROVIDERS.deepseek.baseUrl).toContain('deepseek.com');
@@ -96,5 +110,38 @@ describe('AI 模块', () => {
     expect(messages[1].content).toContain('没记住 3 次');
     expect(messages[1].content).toContain('模糊 2 次');
     expect(messages[0].content).toContain('诊断');
+  });
+
+  it('chat：content 为空但存在 reasoning_content（思考占满）时自动放大 max_tokens 重试', async () => {
+    useSettings.getState().set({ aiProvider: 'tokenrhythm', aiApiKey: 'test-key', aiBaseUrl: '', aiModel: '' });
+    let calls = 0;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        calls += 1;
+        return {
+          ok: true,
+          json: async () =>
+            calls === 1
+              ? { choices: [{ message: { content: '', reasoning_content: '思考中…' } }] }
+              : { choices: [{ message: { content: '分析结果' } }] },
+        } as Response;
+      }),
+    );
+    const reply = await chat([{ role: 'user', content: '分析' }], { maxTokens: 1200 });
+    expect(reply).toBe('分析结果');
+    expect(calls).toBe(2); // 第一次空 → 自动重试一次
+  });
+
+  it('chat：无 reasoning_content 且 content 为空时仍报「AI 返回内容为空」', async () => {
+    useSettings.getState().set({ aiProvider: 'tokenrhythm', aiApiKey: 'test-key', aiBaseUrl: '', aiModel: '' });
+    stubChatResponse({ choices: [{ message: { content: '' } }] });
+    await expect(chat([{ role: 'user', content: '分析' }], { maxTokens: 1200 })).rejects.toThrow('AI 返回内容为空');
+  });
+
+  it('chat：finish_reason=length 时提示输出被截断', async () => {
+    useSettings.getState().set({ aiProvider: 'tokenrhythm', aiApiKey: 'test-key', aiBaseUrl: '', aiModel: '' });
+    stubChatResponse({ choices: [{ message: { content: '' }, finish_reason: 'length' }] });
+    await expect(chat([{ role: 'user', content: '分析' }], { maxTokens: 1200 })).rejects.toThrow('输出超长被截断');
   });
 });

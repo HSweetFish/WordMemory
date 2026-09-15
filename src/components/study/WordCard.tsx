@@ -68,7 +68,7 @@ export default function WordCard({ word, revealed, onReveal, autoSpeak = true }:
               </div>
             ))}
             {word.ex && word.ex.length > 0 && (
-              <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-sm italic text-slate-500 dark:bg-slate-800/70 dark:text-slate-400">
+              <div className="mt-3 rounded-lg bg-white/70 px-3 py-2 text-[15px] italic text-slate-500 dark:bg-slate-800/70 dark:text-slate-400">
                 {word.ex[0]}
               </div>
             )}

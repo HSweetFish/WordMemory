@@ -8,15 +8,33 @@ import {
   type WeakWordStat,
   getLearnedByBook,
   getLearnedWordCount,
-  getTotalLogCount,
   computeStreak,
   getTodayReviewCount,
 } from '@/services/stats';
 import { fetchManifest, getCustomBooks, getLearnedWordIds } from '@/services/wordbook';
 import { useSettings } from '@/stores/settings';
-import { dateKey, dateKeyOffset, shiftDateKey, weekStartOf } from '@/lib/format';
+import { dateKey, dateKeyOffset, shiftDateKey, weekStartOf, lastNDays } from '@/lib/format';
 import { classifyMastery } from '@/lib/mastery';
-import { State, type BookMeta, type Word } from '@/types';
+import { State, type BookMeta, type UserWord, type Word, type DailyStat } from '@/types';
+
+/** 仪表盘快照：并发加载小表，供多个查询复用；大表（review_logs/words）走索引按需查，避免全量拖垮首屏 */
+export interface DashboardSnapshot {
+  /** user_words 全量卡片 */
+  cards: UserWord[];
+  /** daily_stats 全量日统计 */
+  dailyStats: DailyStat[];
+}
+
+/**
+ * 一次扫描、多处复用（瘦身版）：只并发加载 user_words + daily_stats 两张小表。
+ * review_logs（几十万条）与 words（几万条）不走全量：
+ * 薄弱词按 rating 索引、今日复习按 reviewedAt 范围、遗忘曲线取近 365 天、
+ * 掌握度按 *books 多值索引计数、词性分布按已学词 bulkGet。
+ */
+export async function loadDashboardSnapshot(): Promise<DashboardSnapshot> {
+  const [cards, dailyStats] = await Promise.all([db.userWords.toArray(), db.dailyStats.toArray()]);
+  return { cards, dailyStats };
+}
 
 /** 两个东八区日期字符串（YYYY-MM-DD）的日历日差（b - a，天） */
 function dayDiff(a: string, b: string): number {
@@ -53,15 +71,25 @@ export function heatmapRange(): [string, string] {
  * 不含回炉/重学/回忆确认等重复答题，避免「一个词答 5 次」虚高打卡。
  * 同时携带新学/复习分量，页面可按「全部 / 新学 / 复习」切换展示。
  */
-export async function getHeatmapData(): Promise<HeatmapPoint[]> {
+export async function getHeatmapData(snap?: DashboardSnapshot): Promise<HeatmapPoint[]> {
   const [start, end] = heatmapRange();
-  const stats = await getDailyStatsRange(start, end);
-  return stats.map((s) => ({
-    date: s.date,
-    count: s.newCount + s.reviewCount,
-    newCount: s.newCount,
-    reviewCount: s.reviewCount,
-  }));
+  const stats = snap ? snap.dailyStats : await getDailyStatsRange(start, end);
+  const byDate = new Map(stats.map((s) => [s.date, s]));
+  const out: HeatmapPoint[] = [];
+  let cur = start;
+  let guard = 0;
+  while (cur <= end && guard < 400) {
+    const s = byDate.get(cur);
+    out.push({
+      date: cur,
+      count: s ? s.newCount + s.reviewCount : 0,
+      newCount: s ? s.newCount : 0,
+      reviewCount: s ? s.reviewCount : 0,
+    });
+    cur = shiftDateKey(cur, 1);
+    guard++;
+  }
+  return out;
 }
 
 export interface TrendPoint {
@@ -72,14 +100,19 @@ export interface TrendPoint {
 }
 
 /** 最近 N 天学习趋势 */
-export async function getTrendData(days = 30): Promise<TrendPoint[]> {
-  const stats = await getDailyStats(days);
-  return stats.map((s) => ({
-    date: s.date,
-    learn: s.newCount,
-    review: s.reviewCount,
-    correctRate: s.totalCount > 0 ? Math.round((s.correctCount / s.totalCount) * 100) : 0,
-  }));
+export async function getTrendData(days = 30, snap?: DashboardSnapshot): Promise<TrendPoint[]> {
+  const stats = snap ? snap.dailyStats : await getDailyStats(days);
+  const byDate = new Map(stats.map((s) => [s.date, s]));
+  const dates = lastNDays(days);
+  return dates.map((date) => {
+    const s = byDate.get(date);
+    return {
+      date,
+      learn: s ? s.newCount : 0,
+      review: s ? s.reviewCount : 0,
+      correctRate: s && s.totalCount > 0 ? Math.round((s.correctCount / s.totalCount) * 100) : 0,
+    };
+  });
 }
 
 export interface MasterySlice {
@@ -93,8 +126,8 @@ export interface MasterySlice {
  * 全部依据 FSRS 排程间隔（scheduledDays）判定，与答题次数无关：
  * 回炉/重复答题不改变间隔，因此不会把新学词误判为巩固中。
  */
-export async function getMasteryData(): Promise<MasterySlice[]> {
-  const cards = await db.userWords.toArray();
+export async function getMasteryData(snap?: DashboardSnapshot): Promise<MasterySlice[]> {
+  const cards = snap?.cards ?? (await db.userWords.toArray());
   let fresh = 0; // 新学中：间隔 ≤7 天
   let consolidating = 0; // 巩固中：7 < 间隔 < 365 天
   let mastered = 0; // 已掌握：排程间隔 ≥ 365 天
@@ -108,9 +141,9 @@ export async function getMasteryData(): Promise<MasterySlice[]> {
   const { settings } = useSettings.getState();
   let total = 0;
   if (settings.activeBooks.length > 0) {
-    const active = new Set(settings.activeBooks);
-    const words = await db.words.toArray();
-    total = words.filter((w) => w.books.some((b) => active.has(b))).length;
+    // *books 多值索引：只取激活词库的词条主键（去重），避免 words 全表扫描
+    const keys = await db.words.where('books').anyOf(settings.activeBooks).primaryKeys();
+    total = new Set(keys).size;
   }
   const notLearned = Math.max(0, total - cards.length);
 
@@ -147,7 +180,8 @@ export interface ForgettingCurveData {
  * 第 14 天失败 → 从第 14 天起退出保持组，曲线在失败日下降一档；
  * 未复习的日子按「未被判定为遗忘」计保持（乐观），曲线呈阶梯状。
  */
-export async function getForgettingCurveData(): Promise<ForgettingCurveData> {
+export async function getForgettingCurveData(snap?: DashboardSnapshot): Promise<ForgettingCurveData> {
+  // 只取近 365 天日志（reviewedAt 索引范围查询），不走全量
   const logs = await getRecentLogs(365);
   const today = dateKey();
 
@@ -190,7 +224,7 @@ export async function getForgettingCurveData(): Promise<ForgettingCurveData> {
   // 理论曲线：用平均稳定性的合成卡片采样 0-30 天
   let stabilitySum = 0;
   let stabilityN = 0;
-  const cards = await db.userWords.toArray();
+  const cards = snap?.cards ?? (await db.userWords.toArray());
   for (const c of cards) {
     if (c.stability > 0) {
       stabilitySum += c.stability;
@@ -234,7 +268,7 @@ export interface BookProgress {
 }
 
 /** 各词库学习进度（内置 manifest + 自定义词书；可注入 manifest 便于测试） */
-export async function getBookProgress(manifest?: BookMeta[]): Promise<BookProgress[]> {
+export async function getBookProgress(manifest?: BookMeta[], snap?: DashboardSnapshot): Promise<BookProgress[]> {
   let list = manifest;
   if (!list) {
     try {
@@ -249,7 +283,7 @@ export async function getBookProgress(manifest?: BookMeta[]): Promise<BookProgre
       ...custom.map((c) => ({ id: c.id, name: c.name, desc: '自定义词书', count: c.count, file: '' })),
     ];
   }
-  const learned = await getLearnedByBook();
+  const learned = await getLearnedByBook(snap?.cards);
   const learnedMap = new Map(learned.map((l) => [l.bookId, l.count]));
   return list.map((b) => ({
     id: b.id,
@@ -270,8 +304,8 @@ export interface WeakWordItem {
 }
 
 /** 薄弱词 Top N（仅展示词库中仍存在的词；已从词库删除的词不再展示） */
-export async function getWeakWordData(limit = 10): Promise<WeakWordItem[]> {
-  const weak = await getWeakWords(limit);
+export async function getWeakWordData(limit = 10, snap?: DashboardSnapshot): Promise<WeakWordItem[]> {
+  const weak = await getWeakWords(limit, snap ? { cards: snap.cards } : undefined);
   const words = await db.words.bulkGet(weak.map((w) => w.wordId));
   return weak
     .map((w, i) => ({ w, word: words[i] }))
@@ -306,12 +340,13 @@ const POS_NAMES: Record<string, string> = {
   int: '感叹词',
 };
 
-export async function getPosDistribution(): Promise<{ name: string; value: number }[]> {
-  const words = await db.words.toArray();
-  const learned = await getLearnedWordIds();
+export async function getPosDistribution(snap?: DashboardSnapshot): Promise<{ name: string; value: number }[]> {
+  // 只查已学词的词条（bulkGet），不扫全量 words；已学 id 从快照或缓存拿
+  const learned = snap ? new Set(snap.cards.map((c) => c.wordId)) : await getLearnedWordIds();
+  const words = (await db.words.bulkGet([...learned])).filter((w): w is Word => !!w);
   const map = new Map<string, number>();
   for (const w of words) {
-    if (!learned.has(w.w) || !w.pos) continue;
+    if (!w.pos) continue;
     // 多词性格式如 "n.；vt.；vi." → 按全角分号拆分，逐词性计数
     for (const part of w.pos.split('；')) {
       const p = part.replace(/\./g, '').trim();
@@ -344,14 +379,32 @@ export interface DashboardSummary {
 }
 
 /** 顶部汇总卡片数据 */
-export async function getDashboardSummary(): Promise<DashboardSummary> {
+export async function getDashboardSummary(snap?: DashboardSnapshot): Promise<DashboardSummary> {
   const [learnedWords, totalLogs, streak, todayReview] = await Promise.all([
-    getLearnedWordCount(),
-    getTotalLogCount(),
-    computeStreak(),
+    snap ? snap.cards.length : getLearnedWordCount(),
+    // 累计答题总数：索引计数 O(1)，不加载日志
+    db.reviewLogs.count(),
+    snap ? computeStreakFromStats(snap.dailyStats) : computeStreak(),
+    // 今日复习：reviewedAt 索引只查今天范围（几百条），与日志口径严格一致，不依赖可能脏的 daily_stats
     getTodayReviewCount(),
   ]);
   return { learnedWords, totalLogs, streak, todayReview };
+}
+
+/** 从 daily_stats 快照内存计算连续打卡天数（与 computeStreak 口径一致：今日无记录则从昨天起算） */
+function computeStreakFromStats(stats: DailyStat[]): number {
+  const byDate = new Map(stats.map((s) => [s.date, s]));
+  const today = dateKey();
+  const todayStat = byDate.get(today);
+  let cursor = todayStat && todayStat.totalCount > 0 ? 0 : -1;
+  let streak = 0;
+  while (true) {
+    const stat = byDate.get(dateKeyOffset(cursor));
+    if (!stat || stat.totalCount === 0) break;
+    streak++;
+    cursor--;
+  }
+  return streak;
 }
 
 export function trendDateLabel(key: string): string {

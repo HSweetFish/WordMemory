@@ -10,6 +10,7 @@ import {
   getWeakWordData,
   getPosDistribution,
   getDashboardSummary,
+  loadDashboardSnapshot,
   heatmapRange,
   type HeatmapPoint,
   type TrendPoint,
@@ -80,15 +81,17 @@ export default function DashboardPage() {
 
   const load = async () => {
     setLoading(true);
+    // 一次扫描、多处复用：先并发加载全部原始数据，各查询函数复用快照，避免重复全表扫描
+    const snap = await loadDashboardSnapshot();
     const [s, h, t, m, c, b, w, p] = await Promise.all([
-      getDashboardSummary(),
-      getHeatmapData(),
-      getTrendData(30),
-      getMasteryData(),
-      getForgettingCurveData(),
-      getBookProgress(),
-      getWeakWordData(10),
-      getPosDistribution(),
+      getDashboardSummary(snap),
+      getHeatmapData(snap),
+      getTrendData(30, snap),
+      getMasteryData(snap),
+      getForgettingCurveData(snap),
+      getBookProgress(undefined, snap),
+      getWeakWordData(10, snap),
+      getPosDistribution(snap),
     ]);
     setSummary(s);
     setHeatmap(h);
@@ -430,6 +433,12 @@ export default function DashboardPage() {
             </section>
           </div>
 
+          {/* 近 30 天趋势：整宽 */}
+          <section className={ui.cardCompact}>
+            <h2 className={`mb-2 ${ui.sectionSub}`}>📈 近 30 天趋势</h2>
+            <Chart option={trendOption} height={260} />
+          </section>
+
           {/* 记忆保持率(宽) + 掌握度(窄) */}
           <div className="grid gap-4 lg:grid-cols-12">
             <section className={`${ui.cardCompact} lg:col-span-8`}>
@@ -446,12 +455,6 @@ export default function DashboardPage() {
               <Chart option={masteryOption} height={230} />
             </section>
           </div>
-
-          {/* 近 30 天趋势：整宽 */}
-          <section className={ui.cardCompact}>
-            <h2 className={`mb-2 ${ui.sectionSub}`}>📈 近 30 天趋势</h2>
-            <Chart option={trendOption} height={260} />
-          </section>
 
           {/* 薄弱词(宽) + 词性分布(宽) */}
           <div className="grid gap-4 lg:grid-cols-12">

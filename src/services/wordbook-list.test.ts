@@ -53,14 +53,23 @@ describe('词表查询 listWordsWithStatus', () => {
     await installBookData('custom:test', CUSTOM_BOOK.words);
   });
 
-  it('词书筛选：只返回该词书的词（跨词书重复词按主键合并）', async () => {
-    const list = await listWordsWithStatus({ bookId: 'testbook' });
+  it('词书筛选：只返回该词书的词（跨词书重复词按主键合并），total 为过滤后全量', async () => {
+    const { items: list, total } = await listWordsWithStatus({ bookId: 'testbook' });
     expect(list.map((i) => i.word.w).sort()).toEqual(['apple', 'banana', 'cherry']);
-    const custom = await listWordsWithStatus({ bookId: 'custom:test' });
+    expect(total).toBe(3);
+    const { items: custom, total: customTotal } = await listWordsWithStatus({ bookId: 'custom:test' });
     expect(custom.map((i) => i.word.w).sort()).toEqual(['apple', 'durian']);
+    expect(customTotal).toBe(2);
     // 全部（去重后）
-    const all = await listWordsWithStatus();
+    const { items: all, total: allTotal } = await listWordsWithStatus();
     expect(all.map((i) => i.word.w).sort()).toEqual(['apple', 'banana', 'cherry', 'durian']);
+    expect(allTotal).toBe(4);
+  });
+
+  it('limit 截断只影响 items，不影响 total', async () => {
+    const { items, total } = await listWordsWithStatus({ limit: 2 });
+    expect(items).toHaveLength(2);
+    expect(total).toBe(4);
   });
 
   it('状态筛选：未学 / 新学中 / 巩固中 / 已掌握 / 待复习', async () => {
@@ -71,29 +80,30 @@ describe('词表查询 listWordsWithStatus', () => {
       makeCard('cherry', { reps: 10, scheduledDays: 400, state: FsrsState.Review }), // 已掌握
     ]);
 
-    expect((await listWordsWithStatus({ status: 'new' })).map((i) => i.word.w)).toEqual(['durian']);
-    expect((await listWordsWithStatus({ status: 'learning' })).map((i) => i.word.w)).toEqual(['apple']);
-    expect((await listWordsWithStatus({ status: 'consolidating' })).map((i) => i.word.w)).toEqual(['banana']);
-    expect((await listWordsWithStatus({ status: 'mastered' })).map((i) => i.word.w)).toEqual(['cherry']);
+    expect((await listWordsWithStatus({ status: 'new' })).items.map((i) => i.word.w)).toEqual(['durian']);
+    expect((await listWordsWithStatus({ status: 'learning' })).items.map((i) => i.word.w)).toEqual(['apple']);
+    expect((await listWordsWithStatus({ status: 'consolidating' })).items.map((i) => i.word.w)).toEqual(['banana']);
+    expect((await listWordsWithStatus({ status: 'mastered' })).items.map((i) => i.word.w)).toEqual(['cherry']);
 
     // 待复习：due <= now
     await db.userWords.put(makeCard('durian', { due: now - 1000, reps: 3, scheduledDays: 3, state: FsrsState.Review }));
-    expect((await listWordsWithStatus({ status: 'due' })).map((i) => i.word.w)).toEqual(['durian']);
+    expect((await listWordsWithStatus({ status: 'due' })).items.map((i) => i.word.w)).toEqual(['durian']);
   });
 
   it('搜索：前缀匹配，且尊重词书/状态筛选', async () => {
-    const byQuery = await listWordsWithStatus({ query: 'app' });
+    const { items: byQuery, total: byQueryTotal } = await listWordsWithStatus({ query: 'app' });
     expect(byQuery.map((i) => i.word.w)).toEqual(['apple']);
+    expect(byQueryTotal).toBe(1);
     // 搜索 + 词书筛选：apple 属于两本书，限定 custom:test 也能搜到
-    const scoped = await listWordsWithStatus({ query: 'app', bookId: 'custom:test' });
+    const scoped = (await listWordsWithStatus({ query: 'app', bookId: 'custom:test' })).items;
     expect(scoped.map((i) => i.word.w)).toEqual(['apple']);
     // 搜索 + 状态：apple 未学
-    const byStatus = await listWordsWithStatus({ query: 'app', status: 'new' });
+    const byStatus = (await listWordsWithStatus({ query: 'app', status: 'new' })).items;
     expect(byStatus.map((i) => i.word.w)).toEqual(['apple']);
   });
 
   it('排序：词频升序，未知词频（null）排最后', async () => {
-    const list = await listWordsWithStatus();
+    const list = (await listWordsWithStatus()).items;
     const freqOrder = list.map((i) => i.word.freq);
     expect(freqOrder).toEqual([10, 20, 30, null]);
   });

@@ -14,6 +14,7 @@ import {
   getWeakWordData,
   getPosDistribution,
   getDashboardSummary,
+  loadDashboardSnapshot,
   heatmapRange,
 } from '@/services/dashboard';
 import { dateKeyOffset } from '@/lib/format';
@@ -227,5 +228,43 @@ describe('仪表盘数据服务', () => {
     expect(curve.actual[0].days).toBe(1);
     expect(curve.actual.every((p) => p.successRate === 100)).toBe(true);
     expect(curve.actual[0].samples).toBe(2);
+  });
+
+  it('快照复用：一次加载后各查询结果与独立查询完全一致', async () => {
+    await recordRating(WORDS[0], null, Rating.Good, 'learn', 1000);
+    await recordRating(WORDS[1], null, Rating.Again, 'learn', 1000);
+    await recordRating(WORDS[2], null, Rating.Good, 'review', 1000);
+    // 补一条薄弱日志（banana 答错）
+    await db.reviewLogs.add({ wordId: 'banana', rating: 1, elapsedMs: 1000, reviewedAt: Date.now() - 5000, scheduledDays: 1, state: State.Review, mode: 'review' });
+
+    const snap = await loadDashboardSnapshot();
+    const [s1, h1, t1, m1, c1, b1, w1, p1] = await Promise.all([
+      getDashboardSummary(snap),
+      getHeatmapData(snap),
+      getTrendData(30, snap),
+      getMasteryData(snap),
+      getForgettingCurveData(snap),
+      getBookProgress([{ id: 'testbook', name: '测试词库', desc: '', count: 5, file: '' }], snap),
+      getWeakWordData(10, snap),
+      getPosDistribution(snap),
+    ]);
+    const [s2, h2, t2, m2, c2, b2, w2, p2] = await Promise.all([
+      getDashboardSummary(),
+      getHeatmapData(),
+      getTrendData(30),
+      getMasteryData(),
+      getForgettingCurveData(),
+      getBookProgress([{ id: 'testbook', name: '测试词库', desc: '', count: 5, file: '' }]),
+      getWeakWordData(10),
+      getPosDistribution(),
+    ]);
+    expect(s1).toEqual(s2);
+    expect(h1).toEqual(h2);
+    expect(t1).toEqual(t2);
+    expect(m1).toEqual(m2);
+    expect(c1).toEqual(c2);
+    expect(b1).toEqual(b2);
+    expect(w1).toEqual(w2);
+    expect(p1).toEqual(p2);
   });
 });

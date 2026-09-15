@@ -103,6 +103,7 @@ class FSRSImpl implements IScheduler {
       createdAt: now.getTime(),
       wrongCount: 0,
       lastRating: null,
+      retryDueToday: null,
     };
   }
 
@@ -125,6 +126,10 @@ class FSRSImpl implements IScheduler {
       lastRating: rating,
       // Again 记为一次答错（薄弱词分析依据）
       wrongCount: userWord.wrongCount + (rating === Rating.Again ? 1 : 0),
+      // 答错（评分 < 3）未掌握：标记「今天还需回炉再考」，截止为当天 0 点；
+      // 业务层靠它保证待回炉状态持久化、不因跳转页面而丢失；答对则清除。
+      // 安全边界：即使当天天后（考过但重排到明天），clearRetryDue 由业务层处理。
+      retryDueToday: rating < 3 ? dayRangeInZone(dateKey(now))[0] : null,
     };
     return {
       updated,
@@ -162,6 +167,7 @@ class SM2Impl implements IScheduler {
       createdAt: now.getTime(),
       wrongCount: 0,
       lastRating: null,
+      retryDueToday: null,
     };
   }
 
@@ -198,6 +204,8 @@ class SM2Impl implements IScheduler {
       lastReviewAt: now.getTime(),
       lastRating: rating as UserWord['lastRating'],
       wrongCount: userWord.wrongCount + (rating === Rating.Again ? 1 : 0),
+      // 与 FSRS 实现一致：答错标记今日待回炉，答对清除（中断跳转仍可复苏回炉）
+      retryDueToday: rating < 3 ? dayRangeInZone(dateKey(now))[0] : null,
     };
     // 与 FSRS 一致：到期时刻对齐到东八区日历日 0 点，避免到期散布在一天内
     if (interval > 0) {

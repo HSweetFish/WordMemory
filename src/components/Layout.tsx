@@ -5,14 +5,14 @@ import { useReminder } from '@/hooks/useReminder';
 import Logo from '@/components/Logo';
 
 const NAV_ITEMS = [
-  { to: '/', label: '首页', icon: '🏠', end: true },
-  { to: '/learn', label: '学习', icon: '📖' },
-  { to: '/review', label: '复习', icon: '🔁' },
-  { to: '/words', label: '词表', icon: '🔍' },
-  { to: '/dashboard', label: '统计', icon: '📊' },
-  { to: '/books', label: '词库', icon: '📚' },
-  { to: '/settings', label: '设置', icon: '⚙️' },
+  { to: '/', label: '首页', end: true },
+  { to: '/learn', label: '学习' },
+  { to: '/review', label: '复习' },
+  { to: '/words', label: '词表' },
+  { to: '/dashboard', label: '统计' },
+  { to: '/books', label: '词库' },
 ];
+// 「设置」单独渲染：ml-auto 推到最右端，sticky 保证窄屏横向滚动时始终固定在右侧可见
 
 export default function Layout() {
   const { settings } = useSettings();
@@ -60,17 +60,28 @@ export default function Layout() {
                 to={item.to}
                 end={item.end}
                 className={({ isActive }) =>
-                  `flex shrink-0 items-center gap-1 rounded-full px-3 py-1.5 text-sm transition-all ${
+                  `shrink-0 rounded-full px-3 py-1.5 text-sm transition-all ${
                     isActive
                       ? 'bg-brand-gradient font-medium text-white shadow-sm'
                       : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
                   }`
                 }
               >
-                <span>{item.icon}</span>
                 <span>{item.label}</span>
               </NavLink>
             ))}
+            <NavLink
+              to="/settings"
+              className={({ isActive }) =>
+                `sticky right-0 ml-auto shrink-0 rounded-full px-3 py-1.5 text-sm backdrop-blur transition-all ${
+                  isActive
+                    ? 'bg-brand-gradient font-medium text-white shadow-sm'
+                    : 'bg-white/80 text-slate-600 hover:bg-slate-100 dark:bg-slate-900/80 dark:text-slate-300 dark:hover:bg-slate-800'
+                }`
+              }
+            >
+              <span>设置</span>
+            </NavLink>
           </div>
         </nav>
       </header>

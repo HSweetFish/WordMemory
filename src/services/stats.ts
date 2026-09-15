@@ -1,5 +1,5 @@
 import { db } from '@/db/schema';
-import type { DailyStat, ReviewLog } from '@/types';
+import type { DailyStat, ReviewLog, UserWord } from '@/types';
 import { Rating } from '@/types';
 import { dateKey, dateKeyOffset, lastNDays, dayRangeInZone, shiftDateKey } from '@/lib/format';
 
@@ -153,7 +153,8 @@ export async function rebuildDailyStats(): Promise<{ days: number; logs: number 
   }
 
   // 3. 清空缓存，按当前口径重建（与 aggregateDailyStat / ensureDailyStatsRange 完全一致）
-  await db.dailyStats.clear();
+  // 必须在同一事务内 clear + bulkPut：若分两步，重建完成前 dailyStats 为空表，
+  // 启动时首页 computeStreak 会读到空表返回 0，导致「连续打卡」刷新后不显示（跳转后正常）
   const stats: DailyStat[] = [...byDate.entries()]
     .sort((a, b) => (a[0] < b[0] ? -1 : 1))
     .map(([date, dayLogs]) => ({
@@ -166,7 +167,10 @@ export async function rebuildDailyStats(): Promise<{ days: number; logs: number 
       totalCount: dayLogs.length,
       durationSec: durationMap.get(date) ?? 0,
     }));
-  if (stats.length > 0) await db.dailyStats.bulkPut(stats);
+  await db.transaction('rw', db.dailyStats, async () => {
+    await db.dailyStats.clear();
+    if (stats.length > 0) await db.dailyStats.bulkPut(stats);
+  });
   return { days: stats.length, logs: logs.length };
 }
 
@@ -185,9 +189,16 @@ export async function computeStreak(): Promise<number> {
   return streak;
 }
 
-/** 待复习数量（due <= now） */
+/** 当前待复习（due ≤ now） */
 export async function getDueCount(): Promise<number> {
   return db.userWords.where('due').belowOrEqual(Date.now()).count();
+}
+
+/** 预计明天到期复习数（due 落在明天 0 点 ~ 后天 0 点之间） */
+export async function getDueTomorrowCount(): Promise<number> {
+  const tomorrow = shiftDateKey(dateKey(), 1);
+  const [start, end] = dayRangeInZone(tomorrow);
+  return db.userWords.where('due').between(start, end, true, false).count();
 }
 
 /** 今日已学新词数量（review_logs 中今天 mode=learn 且评分≥2（排除“没学会”）的词，按词去重；回炉不重复计） */
@@ -218,6 +229,39 @@ export async function getTodayReviewQuotaUsed(): Promise<number> {
   return logs.filter((l) => l.mode === 'review' && l.rating >= 3).length;
 }
 
+/** 今日概况（学习/复习页无任务时展示；一次查询聚合，口径与统计页一致） */
+export interface TodaySummary {
+  /** 今日已学新词（learn 且评分≥2，按词去重） */
+  newCount: number;
+  /** 今日已复习词（review/random，按词去重） */
+  reviewCount: number;
+  /** 今日答对次数（rating≥3） */
+  correctCount: number;
+  /** 今日答题总次数 */
+  totalCount: number;
+  /** 当前待复习（due ≤ now） */
+  dueCount: number;
+  /** 预计明天到期复习数（due 在明天 0 点 ~ 后天 0 点） */
+  dueTomorrow: number;
+  /** 连续打卡天数 */
+  streak: number;
+}
+
+export async function getTodaySummary(): Promise<TodaySummary> {
+  const [start] = dayRangeInZone(dateKey());
+  const logs = await db.reviewLogs.where('reviewedAt').aboveOrEqual(start).toArray();
+  const [dueCount, dueTomorrow, streak] = await Promise.all([getDueCount(), getDueTomorrowCount(), computeStreak()]);
+  return {
+    newCount: new Set(logs.filter((l) => l.mode === 'learn' && l.rating >= 2).map((l) => l.wordId)).size,
+    reviewCount: new Set(logs.filter((l) => l.mode === 'review' || l.mode === 'random').map((l) => l.wordId)).size,
+    correctCount: logs.filter((l) => l.rating >= 3).length,
+    totalCount: logs.length,
+    dueCount,
+    dueTomorrow,
+    streak,
+  };
+}
+
 /** 掌握度分布：各 FSRS 状态的单词数 */
 export async function getMasteryDistribution(): Promise<{ state: number; count: number }[]> {
   const cards = await db.userWords.toArray();
@@ -236,11 +280,11 @@ export async function getTotalLogCount(): Promise<number> {
   return db.reviewLogs.count();
 }
 
-/** 各词库已学习数量分布 */
-export async function getLearnedByBook(): Promise<{ bookId: string; count: number }[]> {
-  const cards = await db.userWords.toArray();
+/** 各词库已学习数量分布（可传入已加载的卡片数组复用，避免重复全表扫描） */
+export async function getLearnedByBook(cards?: UserWord[]): Promise<{ bookId: string; count: number }[]> {
+  const all = cards ?? (await db.userWords.toArray());
   const map = new Map<string, number>();
-  for (const c of cards) {
+  for (const c of all) {
     for (const b of c.bookIds) map.set(b, (map.get(b) ?? 0) + 1);
   }
   return [...map.entries()].map(([bookId, count]) => ({ bookId, count }));
@@ -274,8 +318,14 @@ export interface WeakWordStat {
   lastRating: number | null;
 }
 
-export async function getWeakWords(limit = 20): Promise<WeakWordStat[]> {
-  const logs = await db.reviewLogs.toArray();
+export async function getWeakWords(limit = 20, ctx?: { logs?: ReviewLog[]; cards?: UserWord[] }): Promise<WeakWordStat[]> {
+  // 走 rating 索引只取薄弱日志（Again/Hard），避免全量扫描几十万条 review_logs
+  const logs =
+    ctx?.logs ??
+    (await db.reviewLogs
+      .where('rating')
+      .anyOf([Rating.Again, Rating.Hard])
+      .toArray());
   const again = new Map<string, number>();
   const hard = new Map<string, number>();
   for (const l of logs) {
@@ -283,7 +333,7 @@ export async function getWeakWords(limit = 20): Promise<WeakWordStat[]> {
     else if (l.rating === Rating.Hard) hard.set(l.wordId, (hard.get(l.wordId) ?? 0) + 1);
   }
   const ids = new Set([...again.keys(), ...hard.keys()]);
-  const cards = await db.userWords.toArray();
+  const cards = ctx?.cards ?? (await db.userWords.toArray());
   const lastRating = new Map(cards.map((c) => [c.wordId, c.lastRating]));
   return [...ids]
     .map((wordId) => {

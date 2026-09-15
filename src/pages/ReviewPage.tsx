@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import StudySession from '@/components/study/StudySession';
+import TodayProgressPanel from '@/components/study/TodayProgressPanel';
 import { useSession } from '@/stores/session';
 
 /** 复习页：FSRS 到期单词复习 */
@@ -11,6 +12,7 @@ export default function ReviewPage() {
   return (
     <div>
       <StudySession mode="review" />
+      <TodayProgressPanel />
     </div>
   );
 }
