@@ -2,7 +2,7 @@
 
 > 🌐 **在线体验**：https://hsweetfish.github.io/WordMemory/ （无需安装，浏览器打开即用，首次访问后支持离线）
 >
-> 🏷 **最新版本**：[v0.4.0](https://github.com/HSweetFish/WordMemory/releases) · 版本迭代规范见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+> 🏷 **最新版本**：[v0.4.1](https://github.com/HSweetFish/WordMemory/releases) · 版本迭代规范见 [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 
 本地优先（local-first）的背单词 Web 应用（PWA）：
 

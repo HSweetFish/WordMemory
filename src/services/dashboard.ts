@@ -221,7 +221,10 @@ export async function getForgettingCurveData(snap?: DashboardSnapshot): Promise<
     if (risk >= 2) actual.push({ days: t, successRate: Math.round(S * 100), samples: risk });
   }
 
-  // 理论曲线：用平均稳定性的合成卡片采样 0-30 天
+  // 理论曲线：用平均稳定性的合成卡片采样。采样天数自适应平均稳定性——
+  // 此前写死 30 天，而平均稳定性常达 70+ 天，位移 30 天 R 只掉几个百分点，
+  // 虚线几乎贴死 99% 变平；改为覆盖到 R≈0.9^1.5 处（约 81%），并至少 90 天
+  // 与实际曲线（KM 1~90 天）横轴对齐，让两条线真正可比。
   let stabilitySum = 0;
   let stabilityN = 0;
   const cards = snap?.cards ?? (await db.userWords.toArray());
@@ -252,7 +255,8 @@ export async function getForgettingCurveData(snap?: DashboardSnapshot): Promise<
       wrongCount: 0,
       lastRating: null,
     };
-    for (let d = 0; d <= 30; d += 1) {
+    const sampleDays = Math.max(90, Math.ceil(avgStability * 1.5));
+    for (let d = 0; d <= sampleDays; d += 1) {
       theoretical.push([d, Math.round(scheduler.retention(synthetic, new Date(now + d * 86400000)) * 100)]);
     }
   }

@@ -224,7 +224,14 @@ export default function DashboardPage() {
     } },
     legend: { data: ['记忆保持率', 'FSRS 理论'], bottom: 0 },
     grid: { left: 45, right: 20, top: 15, bottom: 40 },
-    xAxis: { type: 'value', name: '学习后天数', nameTextStyle: { color: '#94a3b8' }, min: 0, max: 30 },
+    xAxis: {
+      type: 'value',
+      name: '学习后天数',
+      nameTextStyle: { color: '#94a3b8' },
+      min: 0,
+      // 横轴范围随理论曲线自适应：平均稳定性大时需拉到对应的采样天数（否则虚线在 30 天外被截断，且 0-30 内保持率过高像平的）
+      max: curve?.theoretical ? Math.max(30, ...curve.theoretical.map((p) => p[0])) : 30,
+    },
     yAxis: { type: 'value', name: '保持率 %', min: 0, max: 100, splitLine: { lineStyle: { color: '#f1f5f9' } } },
     series: [
       {
